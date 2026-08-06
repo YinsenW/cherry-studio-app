@@ -20,6 +20,9 @@ patchedDependencies:
   '@ai-sdk/openai@2.0.64':
     hash: b45bea4db6bd5366706df6df9aae2b2f3e611a0b0cc0409b5d1d6080701029d4
     path: patches/@ai-sdk+openai@2.0.64.patch
+  '@earendil-works/pi-ai':
+    hash: 54153774c7131bc3e43420dab5b6f1dc6cabf01b78ad680e53586069c29145c4
+    path: patches/@earendil-works__pi-ai.patch
   '@react-native-menu/menu@1.2.2':
     hash: e0960c04197890930e1d9147132c8453e98715c66fca691d31d4e3af1f863fd9
     path: patches/@react-native-menu+menu@1.2.2.patch
@@ -10497,7 +10500,7 @@ snapshots:
 
   '@earendil-works/pi-agent-core@0.84.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.18.3)(zod@3.25.76)':
     dependencies:
-      '@earendil-works/pi-ai': 0.84.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.18.3)(zod@3.25.76)
+      '@earendil-works/pi-ai': 0.84.0(patch_hash=54153774c7131bc3e43420dab5b6f1dc6cabf01b78ad680e53586069c29145c4)(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.18.3)(zod@3.25.76)
       '@earendil-works/pi-telemetry': 0.84.0
       diff: 8.0.4
       ignore: 7.0.5
@@ -10511,7 +10514,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.84.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.18.3)(zod@3.25.76)':
+  '@earendil-works/pi-ai@0.84.0(patch_hash=54153774c7131bc3e43420dab5b6f1dc6cabf01b78ad680e53586069c29145c4)(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(ws@8.18.3)(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
