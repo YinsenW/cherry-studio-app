@@ -4,6 +4,8 @@
       "clear": "Clear",
       "empty": "Ask the agent to do something with your phone capabilities — reminders, calendar, shortcuts, web.",
       "inputPlaceholder": "Describe a task for the agent. It can read reminders, calendars, shortcuts and fetch web content.",
+      "mode": "Режим агента",
+      "modeActive": "Агент",
       "running": "Agent is working…",
       "selectModel": "Select Model",
       "send": "Send",

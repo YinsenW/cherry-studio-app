@@ -1,5 +1,6 @@
-import type { AgentMessage,AgentTool } from '@earendil-works/pi-agent-core'
+import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import { Agent } from '@earendil-works/pi-agent-core'
+import type { Message as PiMessage } from '@earendil-works/pi-ai'
 
 import type { Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
 
@@ -21,7 +22,13 @@ const DEFAULT_SYSTEM_PROMPT = [
 export class AgentService {
   private agent: Agent
 
-  constructor(model: CherryModel, provider: CherryProvider, tools: AgentTool[], systemPrompt?: string) {
+  constructor(
+    model: CherryModel,
+    provider: CherryProvider,
+    tools: AgentTool[],
+    systemPrompt?: string,
+    historyMessages?: PiMessage[]
+  ) {
     this.agent = new Agent({
       initialState: {
         systemPrompt: systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
@@ -33,7 +40,8 @@ export class AgentService {
           provider: provider.id,
           name: model.name
         } as never,
-        tools
+        tools,
+        ...(historyMessages ? { messages: historyMessages as never } : {})
       },
       streamFn: createStreamFn(model, provider)
     })
