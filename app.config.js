@@ -1,9 +1,14 @@
-import packageJson from './package.json'
+// CommonJS version of the Expo app config.
+// NOTE: `app.config.ts` was removed because eas-cli's config loader (jiti)
+// cannot load TypeScript config files under Node 24 (it throws
+// "Cannot read properties of undefined (reading 'CommonJS')" for ANY .ts
+// config). A .js config loads fine. Keep this file CommonJS.
+const packageJson = require('./package.json')
 
 // Read version from environment variable (set during build) or fallback to package.json
 const appVersion = packageJson.version
 
-export default {
+module.exports = {
   expo: {
     name: 'Cherry Studio',
     slug: 'cherry-studio',
@@ -45,7 +50,7 @@ export default {
       permissions: ['android.permission.ACCESS_WIFI_STATE', 'android.permission.CHANGE_WIFI_MULTICAST_STATE']
     },
     plugins: [
-      './plugins/androidThemeColor.ts',
+      './plugins/androidThemeColor.js',
       [
         'expo-build-properties',
         {
@@ -167,7 +172,7 @@ export default {
           enableBase64ShareAndroid: true
         }
       ],
-      './plugins/heapSize.ts'
+      './plugins/heapSize.js'
     ],
     experiments: {
       typedRoutes: true,

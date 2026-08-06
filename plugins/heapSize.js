@@ -1,7 +1,7 @@
-import ConfigPlugins from '@expo/config-plugins'
-export default function androiManifestPlugin(config) {
+const ConfigPlugins = require('@expo/config-plugins')
+module.exports = function androidManifestPlugin(config) {
   return ConfigPlugins.withAndroidManifest(config, async config => {
-    let androidManifest = config.modResults.manifest
+    const androidManifest = config.modResults.manifest
     if (androidManifest && androidManifest.application && androidManifest.application.length > 0) {
       androidManifest.application[0].$['android:largeHeap'] = 'true'
     }
