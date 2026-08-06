@@ -1,7 +1,7 @@
-import { withAndroidStyles } from '@expo/config-plugins'
+import ConfigPlugins from '@expo/config-plugins'
 
 export default function androidThemeColorPlugin(config) {
-  return withAndroidStyles(config, async config => {
+  return ConfigPlugins.withAndroidStyles(config, async config => {
     const styles = config.modResults
     const appTheme = styles.resources?.style?.find((s: any) => s.$.name === 'AppTheme')
     if (appTheme && appTheme.item) {

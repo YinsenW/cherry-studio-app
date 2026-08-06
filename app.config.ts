@@ -1,5 +1,3 @@
-import 'tsx/cjs'
-
 import packageJson from './package.json'
 
 // Read version from environment variable (set during build) or fallback to package.json
@@ -18,7 +16,7 @@ export default {
     newArchEnabled: true,
     entryPoint: './src/app.js',
     updates: {
-      url: 'https://u.expo.dev/80096eaf-3ad0-4b87-a466-15f04da1bacc'
+      url: 'https://u.expo.dev/64c8017f-aa46-4f25-8488-ca87b2d704cc'
     },
     runtimeVersion: {
       policy: 'appVersion'
@@ -47,7 +45,7 @@ export default {
       permissions: ['android.permission.ACCESS_WIFI_STATE', 'android.permission.CHANGE_WIFI_MULTICAST_STATE']
     },
     plugins: [
-      './plugins/androidThemeColor',
+      './plugins/androidThemeColor.ts',
       [
         'expo-build-properties',
         {
@@ -169,7 +167,7 @@ export default {
           enableBase64ShareAndroid: true
         }
       ],
-      './plugins/heapSize'
+      './plugins/heapSize.ts'
     ],
     experiments: {
       typedRoutes: true,
@@ -178,7 +176,7 @@ export default {
     },
     extra: {
       eas: {
-        projectId: '80096eaf-3ad0-4b87-a466-15f04da1bacc'
+        projectId: '64c8017f-aa46-4f25-8488-ca87b2d704cc'
       },
       appVersion
     }
