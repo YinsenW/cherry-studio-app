@@ -54,3 +54,14 @@ Agent 模式的工具集 = `SystemTool`（提醒/日历/时间/网络/快捷指�
 1. `expo-notifications` —— 本地提醒/定时通知（agent 最有价值的能力，Android 上替代 iOS Reminders）
 2. `expo-location` —— 位置感知工具
 3. `expo-media-library` —— 相册读取（注意 Android 14 部分照片访问）
+
+## 已实现工具集（agent 模式全量注入）
+
+| 工具组 | 文件 | 工具 |
+|---|---|---|
+| 系统工具 | `SystemTool` | 提醒/日历/时间/网络抓取/快捷指令 |
+| Android 能力 | `AndroidTools` | 剪贴板×2、网络、设备、打开URL、系统设置页、文档目录、TTS、分享、最近照片、选图、拍照 |
+| 计算/处理 | `ComputeTools` | 19 个：JSON 解析/查询、正则×2、base64×2、URL×2、split、大小写、trim、子串、长度、时间、日期格式化/差值/加减、文本 diff |
+| LLM 子任务 | `createLlmTools` | 总结、翻译、提取 JSON、分析（复用用户模型独立请求） |
+| 免费 API | `ApiTools` | 天气（Open-Meteo）、汇率（er-api）——均无 key |
+| MCP 服务器 | `createMcpTools` | 用户已启用的全部 MCP 工具（GitHub/数据库等） |

@@ -2,12 +2,15 @@ import { tool } from 'ai'
 import * as Clipboard from 'expo-clipboard'
 import * as Device from 'expo-device'
 import * as FileSystem from 'expo-file-system'
+import * as ImagePicker from 'expo-image-picker'
 import * as IntentLauncher from 'expo-intent-launcher'
 import * as Linking from 'expo-linking'
+import * as MediaLibrary from 'expo-media-library'
 import * as Network from 'expo-network'
 import * as Speech from 'expo-speech'
 import * as WebBrowser from 'expo-web-browser'
 import { Platform } from 'react-native'
+import Share from 'react-native-share'
 import { z } from 'zod'
 
 /**
@@ -176,6 +179,83 @@ export const speakText = tool({
   }
 })
 
+export const shareText = tool({
+  description:
+    'Open the system share sheet with a text message, so the user can share it to other apps (messaging, social, notes...).',
+  inputSchema: z.object({
+    text: z.string().describe('The text content to share')
+  }),
+  execute: async ({ text }) => {
+    await Share.open({ title: 'Cherry Studio', message: text, failOnCancel: false })
+    return { message: 'Share sheet opened' }
+  }
+})
+
+export const listRecentPhotos = tool({
+  description:
+    'List the most recent photos in the device photo library (names + taken dates). Asks for photo library permission the first time. Note: on Android 14 the user may grant partial access.',
+  inputSchema: z.object({
+    count: z.number().optional().describe('How many recent photos to list, default 10')
+  }),
+  execute: async ({ count }) => {
+    const perm = await MediaLibrary.requestPermissionsAsync()
+    if (!perm.granted) {
+      return { ok: false, error: 'Photo library permission denied' }
+    }
+    const { assets } = await MediaLibrary.getAssetsAsync({
+      first: count ?? 10,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+      mediaType: MediaLibrary.MediaType.photo
+    })
+    return {
+      ok: true,
+      photos: assets.map(a => ({
+        id: a.id,
+        filename: a.filename,
+        createdAt: new Date(a.creationTime).toISOString(),
+        width: a.width,
+        height: a.height,
+        uri: a.uri
+      }))
+    }
+  }
+})
+
+export const pickImage = tool({
+  description:
+    'Open the system photo picker so the user can select one image. Returns the image URI and metadata. Asks for permission if needed.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      selectionLimit: 1,
+      quality: 0.8
+    })
+    if (result.canceled || result.assets.length === 0) {
+      return { ok: false, error: 'User cancelled image selection' }
+    }
+    const asset = result.assets[0]
+    return { ok: true, uri: asset.uri, width: asset.width, height: asset.height, mimeType: asset.mimeType }
+  }
+})
+
+export const takePhoto = tool({
+  description: 'Open the camera so the user can take a photo. Returns the captured photo URI and metadata.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync()
+    if (!perm.granted) {
+      return { ok: false, error: 'Camera permission denied' }
+    }
+    const result = await ImagePicker.launchCameraAsync({ quality: 0.8 })
+    if (result.canceled || result.assets.length === 0) {
+      return { ok: false, error: 'User cancelled camera' }
+    }
+    const asset = result.assets[0]
+    return { ok: true, uri: asset.uri, width: asset.width, height: asset.height, mimeType: asset.mimeType }
+  }
+})
+
 export const AndroidTool = {
   GetClipboardText: getClipboardText,
   SetClipboardText: setClipboardText,
@@ -184,7 +264,11 @@ export const AndroidTool = {
   OpenUrl: openUrl,
   OpenSystemSettings: openSystemSettings,
   ListAppDocuments: listAppDocuments,
-  SpeakText: speakText
+  SpeakText: speakText,
+  ShareText: shareText,
+  ListRecentPhotos: listRecentPhotos,
+  PickImage: pickImage,
+  TakePhoto: takePhoto
 }
 
 export type AndroidToolKeys = keyof typeof AndroidTool

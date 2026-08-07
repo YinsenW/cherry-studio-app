@@ -2,6 +2,10 @@ import { messageDatabase } from '@database'
 
 import { SystemTool } from '@/aiCore/tools/SystemTools'
 import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
+import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
+import { ComputeTool } from '@/aiCore/tools/SystemTools/ComputeTools'
+import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
+import { createMcpTools } from '@/aiCore/tools/SystemTools/McpTools'
 import { loggerService } from '@/services/LoggerService'
 import {
   cancelThrottledBlockUpdate,
@@ -92,11 +96,16 @@ export async function sendAgentMessage(
       assistant.model?.provider ?? ''
     )
 
-    // 4. 构造 agent：全量 SystemTool（提醒/日历/时间/网络/快捷指令）+ Android 系统能力工具
+    // 4. 构造 agent 工具集：系统工具 + Android 能力 + 计算工具 + LLM 子任务 + 免费 API + 用户 MCP 服务器
     const provider = await getAssistantProvider(assistant)
+    const mcpTools = await createMcpTools(assistant)
     const tools = [
       ...Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool))
+      ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(ComputeTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(ApiTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(createLlmTools(assistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...mcpTools
     ]
     const agentService = new AgentService(assistant.model!, provider, tools, undefined, contextMessages as never[])
 
