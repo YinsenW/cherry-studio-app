@@ -69,7 +69,13 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
 
       case 'message_end': {
         if (event.message.role === 'assistant' && textStarted) {
-          emit({ type: ChunkType.TEXT_COMPLETE, text: '' })
+          // 关键：TEXT_COMPLETE 必须带完整文本，否则 onTextComplete 会用空字符串
+          // 覆盖 block 的 content（模拟器上验证出的根因：文本被冲掉）。
+          const fullText = event.message.content
+            .filter(part => part.type === 'text')
+            .map(part => (part as { text: string }).text)
+            .join('')
+          emit({ type: ChunkType.TEXT_COMPLETE, text: fullText })
           textStarted = false
         }
         break

@@ -1,14 +1,18 @@
+import { createExecutor } from '@cherrystudio/ai-core'
 import type { StreamFn } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, ToolCall, Usage } from '@earendil-works/pi-ai'
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
-import { streamText, type ToolSet } from 'ai'
+import { fetch as expoFetch } from 'expo/fetch'
 
 import { createAiSdkProvider } from '@/aiCore/provider/factory'
 import { prepareSpecialProviderConfig, providerToAiSdkConfig } from '@/aiCore/provider/providerConfig'
+import { loggerService } from '@/services/LoggerService'
 import type { Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
 
 import { piMessagesToAiSdkMessages } from './messageBridge'
 import { agentToolToAiSdkTool } from './toolAdapter'
+
+const logger = loggerService.withContext('streamBridge')
 
 /**
  * 用 Cherry 的 provider 体系实现 pi-agent-core 的 streamFn。
@@ -22,7 +26,7 @@ import { agentToolToAiSdkTool } from './toolAdapter'
  * 按 StreamFn 契约不抛出异常：失败通过 error 事件编码。
  */
 export function createStreamFn(model: CherryModel, provider: CherryProvider): StreamFn {
-  return (piModel, context, _options) => {
+  return (piModel, context, options) => {
     const stream = createAssistantMessageEventStream()
 
     void (async () => {
@@ -54,23 +58,33 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
 
       try {
         const config = providerToAiSdkConfig(provider, model)
+        // 关键：注入 expoFetch（与普通聊天 ModernAiProvider 的 applyCustomFetchToConfig 一致）。
+        // 否则 @ai-sdk/openai-compatible 用 RN 默认 fetch，读 SSE 流返回 Empty response body，
+        // 导致 assistant 文本永远为空（这就是模拟器上复现的根因）。
+        if (config.options) {
+          config.options.fetch = expoFetch
+        }
         await prepareSpecialProviderConfig(provider, config)
+        // 用 createProviderCore 创建 provider（与普通聊天同源），拿已解析的 model 对象。
+        // 传字符串 model.id 给 executor 会触发 globalModelResolver，自定义 provider（mock-agent）
+        // 未注册会报 "No providers registered"。
         const localProvider = await createAiSdkProvider(config)
         if (!localProvider) {
           throw new Error('Failed to create provider instance')
         }
-
         const aiModel = localProvider.languageModel(model.id)
+        const executor = createExecutor(config.providerId, config.options)
         const messages = piMessagesToAiSdkMessages(context.messages)
         const tools = context.tools?.length
           ? Object.fromEntries(context.tools.map(tool => [tool.name, agentToolToAiSdkTool(tool)]))
           : undefined
 
-        const result = await streamText({
+        const result = await executor.streamText({
           model: aiModel,
           system: context.systemPrompt,
           messages,
-          tools: tools as ToolSet | undefined
+          tools: tools as Parameters<typeof executor.streamText>[0]['tools'],
+          abortSignal: options?.signal
         })
 
         stream.push({ type: 'start', partial: buildPartial() })
@@ -111,6 +125,7 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
         stream.push({ type: 'done', reason: 'stop', message: finalMessage })
         stream.end(finalMessage)
       } catch (error) {
+        logger.error('streamBridge executor 调用失败:', error)
         const errorMessage: AssistantMessage = {
           ...buildPartial('error'),
           errorMessage: error instanceof Error ? error.message : String(error)
