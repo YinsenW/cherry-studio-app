@@ -33,9 +33,6 @@ export interface PreferenceSchemas {
     // Chat Configuration
     'chat.auto_scroll': boolean
 
-    // Agent Configuration
-    'agent.mode_enabled': boolean
-
     // App State
     'app.initialization_version': number
     'app.dismissed_update_version': string

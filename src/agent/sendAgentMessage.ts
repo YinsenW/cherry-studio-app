@@ -46,7 +46,7 @@ const AGENT_TIMEOUT_MS = 120_000
  * @param userMessage 触发这次 agent 的用户消息（已在 DB）
  * @param assistantMessage 本次要填充内容的 assistant 消息（已在 DB，空块）
  */
-async function runAgentSession(
+export async function runAgentSession(
   userMessage: Message,
   assistantMessage: Message,
   assistant: Assistant,

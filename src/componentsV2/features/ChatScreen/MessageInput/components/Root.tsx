@@ -3,14 +3,12 @@ import { Platform, View } from 'react-native'
 
 import { isReasoningModel } from '@/config/models'
 import { useBottom } from '@/hooks/useBottom'
-import { usePreference } from '@/hooks/usePreference'
 import type { Assistant, Topic } from '@/types/assistant'
 import type { FileMetadata } from '@/types/file'
 
 import { presentExpandInputSheet } from '../../../Sheet/ExpandInputSheet'
 import { MessageInputContext, type MessageInputContextValue } from '../context/MessageInputContext'
 import { useFileAttachments, useMentions, useMessageSend, useTextInput, useVoiceInput } from '../hooks'
-import { AgentModeToggle } from './AgentModeToggle'
 import { DefaultLayout } from './DefaultLayout'
 
 interface RootProps {
@@ -56,8 +54,6 @@ export const Root: React.FC<RootProps> = ({ topic, assistant, updateAssistant, c
     clearFiles()
   }
 
-  const [agentMode] = usePreference('agent.mode_enabled')
-
   const { sendMessage, onPause, isEditing, cancelEditing } = useMessageSend({
     topic,
     assistant,
@@ -67,8 +63,7 @@ export const Root: React.FC<RootProps> = ({ topic, assistant, updateAssistant, c
     clearInputs,
     restoreInputs,
     onEditStart: handleEditStart,
-    onEditCancel: handleEditCancel,
-    agentMode
+    onEditCancel: handleEditCancel
   })
 
   const { isVoiceActive, setIsVoiceActive } = useVoiceInput()
@@ -108,7 +103,6 @@ export const Root: React.FC<RootProps> = ({ topic, assistant, updateAssistant, c
         style={{
           paddingBottom: Platform.OS === 'android' ? bottomPad + 8 : bottomPad
         }}>
-        <AgentModeToggle />
         {children ?? <DefaultLayout />}
       </View>
     </MessageInputContext.Provider>

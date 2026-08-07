@@ -252,13 +252,10 @@ export async function regenerateResponsesForUserMessage(userMessage: Message, as
       return
     }
 
-    // Regenerate all linked assistant messages in parallel
-    // Use skipLoadingStateManagement to prevent race condition where first completion
-    // sets loading=false while others are still running
+    // Regenerate all linked assistant messages in parallel（agent 是唯一模式）
+    const { regenerateAgentMessage } = await import('@/agent/sendAgentMessage')
     const results = await Promise.allSettled(
-      linkedAssistantMessages.map(assistantMsg =>
-        regenerateAssistantMessage(assistantMsg, assistant, { skipLoadingStateManagement: true })
-      )
+      linkedAssistantMessages.map(assistantMsg => regenerateAgentMessage(assistantMsg, assistant))
     )
 
     // Check for failures and log them
@@ -383,8 +380,9 @@ export async function editUserMessageAndRegenerate(
     })
     await saveMessageAndBlocksToDB(newAssistantMessage, [])
 
-    // 8. Fetch and process assistant response
-    await fetchAndProcessAssistantResponseImpl(topicId, assistant, newAssistantMessage)
+    // 8. Fetch and process assistant response（agent 是唯一模式，走 agent 通道）
+    const { runAgentSession } = await import('@/agent/sendAgentMessage')
+    await runAgentSession(userMessage, newAssistantMessage, assistant, topicId)
   } catch (error) {
     logger.error('Error in editUserMessageAndRegenerate:', error)
     await finishTopicLoading(topicId)

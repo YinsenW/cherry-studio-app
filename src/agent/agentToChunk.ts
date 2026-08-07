@@ -62,7 +62,15 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
             emit({ type: ChunkType.TEXT_START })
             textStarted = true
           }
-          emit({ type: ChunkType.TEXT_DELTA, text: deltaEvent.delta })
+          // 关键：发累积文本而不是增量 delta。
+          // 现有 onTextChunk 是覆盖式写入（content = text），普通聊天发累积文本
+          // （AiSdkToChunkAdapter accumulate 模式），如果发增量会导致逐字覆盖、
+          // 只剩末尾，最后 onTextComplete 才全量落盘（表现为"最后一下全出来"）。
+          const accumulatedText = deltaEvent.partial.content
+            .filter(part => part.type === 'text')
+            .map(part => (part as { text: string }).text)
+            .join('')
+          emit({ type: ChunkType.TEXT_DELTA, text: accumulatedText })
         }
         break
       }

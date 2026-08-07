@@ -15,10 +15,8 @@ import {
   deleteMessageById,
   editAssistantMessage,
   fetchTranslateThunk,
-  regenerateAssistantMessage,
   regenerateResponsesForUserMessage
 } from '@/services/MessagesService'
-import { preferenceService } from '@/services/PreferenceService'
 import { setEditingMessage } from '@/store/runtime'
 import type { Assistant } from '@/types/assistant'
 import type { Message } from '@/types/message'
@@ -112,20 +110,14 @@ export const useMessageActions = ({ message, assistant }: UseMessageActionsProps
     }
 
     try {
-      // Agent 模式下重新生成也走 agent 通道（而不是 chat 通道）
-      const isAgentMode = preferenceService.getCached('agent.mode_enabled') ?? false
-      if (isAgentMode && message.role === 'assistant') {
+      // Agent 是唯一模式：assistant 消息重新生成恒走 agent 通道
+      if (message.role === 'assistant') {
         await regenerateAgentMessage(message, assistant)
         return
       }
 
-      if (message.role === 'user') {
-        // For user messages: regenerate all linked assistant responses
-        await regenerateResponsesForUserMessage(message, assistant)
-      } else {
-        // For assistant messages: regenerate this specific response
-        await regenerateAssistantMessage(message, assistant)
-      }
+      // For user messages: regenerate all linked assistant responses
+      await regenerateResponsesForUserMessage(message, assistant)
     } catch (error) {
       logger.error('Error regenerating message:', error)
     }

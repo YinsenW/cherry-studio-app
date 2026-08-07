@@ -7,7 +7,7 @@ import { presentDialog } from '@/componentsV2/base/Dialog'
 import { useMessageEdit } from '@/hooks/useMessageEdit'
 import { useMessageOperations } from '@/hooks/useMessageOperation'
 import { loggerService } from '@/services/LoggerService'
-import { editUserMessageAndRegenerate, getUserMessage, sendMessage as _sendMessage } from '@/services/MessagesService'
+import { editUserMessageAndRegenerate, getUserMessage } from '@/services/MessagesService'
 import { topicService } from '@/services/TopicService'
 import type { Assistant, Model, Topic } from '@/types/assistant'
 import type { FileMetadata } from '@/types/file'
@@ -25,8 +25,6 @@ export interface UseMessageSendOptions {
   restoreInputs: (text: string, files: FileMetadata[]) => void
   onEditStart?: (content: string, files?: FileMetadata[]) => void
   onEditCancel?: () => void
-  /** Agent 模式：消息发送走 pi agent 循环（自主多步工具编排） */
-  agentMode?: boolean
 }
 
 export interface UseMessageSendReturn {
@@ -41,8 +39,7 @@ export interface UseMessageSendReturn {
  * Extracted from useMessageInputLogic lines 100-168
  */
 export function useMessageSend(options: UseMessageSendOptions): UseMessageSendReturn {
-  const { topic, assistant, text, files, mentions, clearInputs, restoreInputs, onEditStart, onEditCancel, agentMode } =
-    options
+  const { topic, assistant, text, files, mentions, clearInputs, restoreInputs, onEditStart, onEditCancel } = options
   const { t } = useTranslation()
 
   const { pauseMessages } = useMessageOperations(topic)
@@ -123,11 +120,7 @@ export function useMessageSend(options: UseMessageSendOptions): UseMessageSendRe
         message.mentions = currentMentions
       }
 
-      if (agentMode) {
-        await sendAgentMessage(message, blocks, assistant, topic.id)
-      } else {
-        await _sendMessage(message, blocks, assistant, topic.id)
-      }
+      await sendAgentMessage(message, blocks, assistant, topic.id)
     } catch (error) {
       logger.error('Error sending message:', error)
       await topicService.updateTopic(topic.id, { isLoading: false })
