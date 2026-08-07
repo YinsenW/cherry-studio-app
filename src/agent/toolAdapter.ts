@@ -40,22 +40,19 @@ export function aiSdkToolToAgentTool(name: string, aiTool: Tool): AgentTool {
 }
 
 /**
- * 把 pi 的 AgentTool 反向适配为 AI SDK tool，供 streamText 使用。
- * 这样 agent 循环里的工具和 Cherry 的 provider 是同一套工具协议。
+ * 把 pi 的 AgentTool 反向适配为 AI SDK tool，供 streamText 声明工具用。
+ *
+ * 关键：**不传 execute**。AI SDK 的 streamText 会对带 execute 的工具
+ * 自动执行并自动续轮，那样工具调用就绕过了 pi agent（tool_execution
+ * 事件永不触发，UI 看不到工具）。去掉 execute 后，AI SDK 只把模型
+ * 发出的 tool-call 作为 chunk 声明，由 pi agent 自己执行工具并把结果
+ * 通过 toolResult 消息送回下一轮。
  */
-export function agentToolToAiSdkTool(agentTool: PiTool): Tool & { execute: NonNullable<Tool['execute']> } {
+export function agentToolToAiSdkTool(agentTool: PiTool): Tool {
   const toolAny = agentTool as unknown as AgentTool
   return {
     description: toolAny.description ?? agentTool.name,
     // AI SDK 需要 Schema 对象（非裸 JSON）。pi 的 parameters 是 JSON Schema 形状（typebox），用 jsonSchema 包装。
-    inputSchema: jsonSchema(toolAny.parameters as Record<string, unknown>),
-    execute: async (args, options) => {
-      const result = await toolAny.execute('', args, options?.abortSignal, undefined)
-      const text = result.content
-        .filter(part => part.type === 'text')
-        .map(part => (part as { text: string }).text)
-        .join('')
-      return text || 'OK'
-    }
+    inputSchema: jsonSchema(toolAny.parameters as Record<string, unknown>)
   }
 }

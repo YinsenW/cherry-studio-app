@@ -38,7 +38,8 @@ export function piMessagesToAiSdkMessages(messages: PiMessage[]): ModelMessage[]
             type: 'tool-call' as const,
             toolCallId: part.id,
             toolName: part.name,
-            args: part.arguments
+            // v5 的 tool-call part 用 input（不是 args）
+            input: part.arguments
           }))
         converted.push({
           role: 'assistant',
@@ -46,7 +47,8 @@ export function piMessagesToAiSdkMessages(messages: PiMessage[]): ModelMessage[]
         } as ModelMessage)
         break
       }
-      case 'toolResult':
+      case 'toolResult': {
+        const resultText = extractText(message) || 'OK'
         converted.push({
           role: 'tool',
           content: [
@@ -54,11 +56,13 @@ export function piMessagesToAiSdkMessages(messages: PiMessage[]): ModelMessage[]
               type: 'tool-result' as const,
               toolCallId: message.toolCallId,
               toolName: message.toolName,
-              result: extractText(message) || 'OK'
+              // v5 的 tool-result part 用 output（discriminatedUnion: {type:'text'|'json'|'error-text', value}）
+              output: { type: 'text', value: resultText }
             }
           ]
         } as unknown as ModelMessage)
         break
+      }
       default:
         break
     }

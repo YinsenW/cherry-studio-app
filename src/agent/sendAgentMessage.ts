@@ -6,6 +6,7 @@ import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
 import { ComputeTool } from '@/aiCore/tools/SystemTools/ComputeTools'
 import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
 import { createMcpTools } from '@/aiCore/tools/SystemTools/McpTools'
+import { fetchTopicNaming } from '@/services/ApiService'
 import { loggerService } from '@/services/LoggerService'
 import {
   cancelThrottledBlockUpdate,
@@ -128,10 +129,17 @@ export async function sendAgentMessage(
       }
     })
     streamProcessor?.({ type: ChunkType.BLOCK_COMPLETE })
+  } finally {
+    // 收尾：与普通聊天路径一致，必须复位 loading 并触发话题命名
     try {
       await topicService.updateTopic(topicId, { isLoading: false })
     } catch {
       // 忽略收尾错误
+    }
+    try {
+      await fetchTopicNaming(topicId)
+    } catch {
+      // 忽略命名错误
     }
   }
 }
