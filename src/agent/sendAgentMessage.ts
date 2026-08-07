@@ -1,5 +1,6 @@
 import { messageDatabase } from '@database'
 
+import { OAuthTool } from '@/agent/oauth/oauthTools'
 import { SystemTool } from '@/aiCore/tools/SystemTools'
 import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
 import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
@@ -97,6 +98,7 @@ export async function runAgentSession(
       ...Object.entries(ApiTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(FeishuTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(GithubTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(OAuthTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(createLlmTools(assistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...mcpTools
     ]

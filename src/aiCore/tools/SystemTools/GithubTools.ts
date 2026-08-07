@@ -2,6 +2,8 @@ import { tool } from 'ai'
 import { Buffer } from 'buffer'
 import { z } from 'zod'
 
+import { getGithubAccessToken } from '@/agent/oauth/githubOAuth'
+
 /**
  * GitHub REST API 工具组（BYOK）。
  *
@@ -12,9 +14,11 @@ import { z } from 'zod'
 
 const GH_BASE = 'https://api.github.com'
 
-async function ghGet(path: string, token: string): Promise<any> {
+async function ghGet(path: string, token?: string): Promise<any> {
+  const effective = token ?? getGithubAccessToken()
+  if (!effective) throw new Error('GitHub 未授权：请先调用 authorizeGithub 完成授权')
   const resp = await fetch(`${GH_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
+    headers: { Authorization: `Bearer ${effective}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
   })
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
@@ -23,11 +27,13 @@ async function ghGet(path: string, token: string): Promise<any> {
   return resp.json()
 }
 
-async function ghPost(path: string, token: string, body: any): Promise<any> {
+async function ghPost(path: string, token: string | undefined, body: any): Promise<any> {
+  const effective = token ?? getGithubAccessToken()
+  if (!effective) throw new Error('GitHub 未授权：请先调用 authorizeGithub 完成授权')
   const resp = await fetch(`${GH_BASE}${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${effective}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json'
@@ -44,7 +50,7 @@ async function ghPost(path: string, token: string, body: any): Promise<any> {
 export const ghGetUser = tool({
   description: '获取当前 GitHub 账号信息（登录名、名字、公开仓库数、粉丝等）。需要用户提供 GitHub Personal Access Token。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token')
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）')
   }),
   execute: async ({ token }) => {
     const u = await ghGet('/user', token)
@@ -64,7 +70,7 @@ export const ghGetUser = tool({
 export const ghListRepos = tool({
   description: '列出当前用户可见的仓库（可按关键词过滤、排序）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     query: z.string().optional().describe('仓库名关键词过滤'),
     sort: z.enum(['full_name', 'created', 'updated', 'pushed']).optional().default('updated').describe('排序字段'),
     perPage: z.number().optional().default(20).describe('每页数量')
@@ -92,7 +98,7 @@ export const ghListRepos = tool({
 export const ghGetRepo = tool({
   description: '获取单个仓库的详细信息（描述、语言、星标、默认分支、最近提交时间等）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名')
   }),
@@ -118,7 +124,7 @@ export const ghGetRepo = tool({
 export const ghCreateRepo = tool({
   description: '创建一个新仓库。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     name: z.string().describe('仓库名'),
     description: z.string().optional().describe('仓库描述'),
     private: z.boolean().optional().default(false).describe('是否私有'),
@@ -138,7 +144,7 @@ export const ghCreateRepo = tool({
 export const ghListIssues = tool({
   description: '列出仓库的 issue（可按状态/作者/标签筛选）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     state: z.enum(['open', 'closed', 'all']).optional().default('open').describe('issue 状态'),
@@ -167,7 +173,7 @@ export const ghListIssues = tool({
 export const ghCreateIssue = tool({
   description: '在仓库创建一个 issue。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     title: z.string().describe('issue 标题'),
@@ -183,7 +189,7 @@ export const ghCreateIssue = tool({
 export const ghCreateComment = tool({
   description: '在 issue 或 PR 上创建一条评论。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     issueNumber: z.number().describe('issue 或 PR 编号'),
@@ -198,7 +204,7 @@ export const ghCreateComment = tool({
 export const ghListPullRequests = tool({
   description: '列出仓库的 Pull Request（可按状态筛选）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     state: z.enum(['open', 'closed', 'all']).optional().default('open').describe('PR 状态'),
@@ -225,7 +231,7 @@ export const ghListPullRequests = tool({
 export const ghCreatePullRequest = tool({
   description: '创建一条 Pull Request。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     title: z.string().describe('PR 标题'),
@@ -242,7 +248,7 @@ export const ghCreatePullRequest = tool({
 export const ghCreateGist = tool({
   description: '创建一条 GitHub Gist（代码片段/笔记）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     description: z.string().optional().describe('Gist 描述'),
     files: z
       .record(z.string(), z.object({ content: z.string() }))
@@ -263,7 +269,7 @@ export const ghCreateGist = tool({
 export const ghSearchRepos = tool({
   description: '搜索 GitHub 公开仓库（按关键词，可按语言/星标数排序）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     query: z.string().describe('搜索关键词'),
     language: z.string().optional().describe('语言过滤，如 javascript'),
     sort: z.enum(['stars', 'forks', 'updated']).optional().default('stars').describe('排序'),
@@ -291,7 +297,7 @@ export const ghSearchRepos = tool({
 export const ghReadFile = tool({
   description: '读取仓库某个文件的原始内容（需要知道默认分支）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     owner: z.string().describe('仓库所有者'),
     repo: z.string().describe('仓库名'),
     path: z.string().describe('文件路径，如 README.md'),
@@ -311,7 +317,7 @@ export const ghReadFile = tool({
 export const ghListIssuesAssigned = tool({
   description: '列出分配给当前用户的 issue（跨仓库，相当于 GitHub 的 Assigned 视图）。',
   inputSchema: z.object({
-    token: z.string().describe('GitHub Personal Access Token'),
+    token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
     filter: z.enum(['assigned', 'created', 'mentioned', 'subscribed']).optional().default('assigned').describe('过滤维度'),
     state: z.enum(['open', 'closed', 'all']).optional().default('open').describe('issue 状态'),
     perPage: z.number().optional().default(20).describe('每页数量')

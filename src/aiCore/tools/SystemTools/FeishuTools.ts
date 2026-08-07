@@ -1,6 +1,8 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 
+import { getFeishuAccessToken } from '@/agent/oauth/feishuOAuth'
+
 /**
  * 飞书开放平台 API 工具组（BYOK）。
  *
@@ -48,6 +50,13 @@ async function feishuPost(path: string, token: string, body: any): Promise<any> 
   return resp.json()
 }
 
+/** 解析调用 token：优先 OAuth 授权的 user_access_token，否则用 appId+Secret 换 tenant token */
+async function resolveToken(appId: string, appSecret: string): Promise<string> {
+  const oauth = getFeishuAccessToken()
+  if (oauth) return oauth
+  return getTenantToken(appId, appSecret)
+}
+
 /** 统一校验飞书响应 code */
 function assertFeishuOk(data: any, action: string) {
   if (data.code !== 0) {
@@ -66,7 +75,7 @@ export const feishuSendText = tool({
     text: z.string().describe('要发送的文本内容')
   }),
   execute: async ({ appId, appSecret, receiveId, receiveIdType, text }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const content = JSON.stringify({ text })
     const data = await feishuPost(`/im/v1/messages?receive_id_type=${receiveIdType}`, token, {
       receive_id: receiveId,
@@ -88,7 +97,7 @@ export const feishuGetUser = tool({
     userIdType: z.enum(['open_id', 'union_id', 'user_id']).default('open_id').describe('userId 的类型')
   }),
   execute: async ({ appId, appSecret, userId, userIdType }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuGet(`/contact/v3/users/${encodeURIComponent(userId)}?user_id_type=${userIdType}`, token)
     assertFeishuOk(data, '查询用户')
     const u = data.data?.user
@@ -113,7 +122,7 @@ export const feishuGetChat = tool({
     chatId: z.string().describe('群 chat_id（oc_xxx）')
   }),
   execute: async ({ appId, appSecret, chatId }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuGet(`/im/v1/chats/${encodeURIComponent(chatId)}`, token)
     assertFeishuOk(data, '查询群')
     const c = data.data
@@ -137,7 +146,7 @@ export const feishuSearchGroup = tool({
     query: z.string().describe('群名搜索关键词')
   }),
   execute: async ({ appId, appSecret, query }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuGet(`/im/v1/chats/search?query=${encodeURIComponent(query)}`, token)
     assertFeishuOk(data, '搜索群')
     const items = data.data?.items ?? []
@@ -157,7 +166,7 @@ export const feishuCreateDocx = tool({
     folderToken: z.string().optional().describe('父文件夹 token，不传则创建在「我的空间」')
   }),
   execute: async ({ appId, appSecret, title, folderToken }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuPost('/docx/v1/documents', token, {
       title,
       ...(folderToken ? { folder_token: folderToken } : {})
@@ -181,7 +190,7 @@ export const feishuGetDocx = tool({
     documentId: z.string().describe('文档 document_id')
   }),
   execute: async ({ appId, appSecret, documentId }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const doc = await feishuGet(`/docx/v1/documents/${encodeURIComponent(documentId)}`, token)
     assertFeishuOk(doc, '读取文档信息')
     const blocksResp = await feishuGet(`/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=200`, token)
@@ -206,7 +215,7 @@ export const feishuSearchCalendar = tool({
     query: z.string().optional().describe('日历名称关键词，不传返回全部')
   }),
   execute: async ({ appId, appSecret, query }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const suffix = query ? `?query=${encodeURIComponent(query)}` : ''
     const data = await feishuGet(`/calendar/v4/calendars${suffix}`, token)
     assertFeishuOk(data, '搜索日历')
@@ -234,7 +243,7 @@ export const feishuListCalendarEvents = tool({
     endTime: z.string().describe('结束时间，RFC3339，如 2026-08-07T23:59:59+08:00')
   }),
   execute: async ({ appId, appSecret, calendarId, startTime, endTime }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuGet(
       `/calendar/v4/calendars/${encodeURIComponent(calendarId)}/events?start_time=${encodeURIComponent(startTime)}&end_time=${encodeURIComponent(endTime)}`,
       token
@@ -267,7 +276,7 @@ export const feishuCreateCalendarEvent = tool({
     endTimestamp: z.number().describe('结束时间 Unix 秒级时间戳')
   }),
   execute: async ({ appId, appSecret, calendarId, summary, description, startTimestamp, endTimestamp }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const data = await feishuPost(`/calendar/v4/calendars/${encodeURIComponent(calendarId)}/events`, token, {
       summary,
       description,
@@ -288,7 +297,7 @@ export const feishuGetApprovalInstances = tool({
     pageSize: z.number().optional().default(20).describe('每页条数')
   }),
   execute: async ({ appId, appSecret, status, pageSize }) => {
-    const token = await getTenantToken(appId, appSecret)
+    const token = await resolveToken(appId, appSecret)
     const params = new URLSearchParams({ page_size: String(pageSize ?? 20) })
     if (status) params.set('status', status)
     const data = await feishuGet(`/approval/v4/instances/search?${params}`, token)
