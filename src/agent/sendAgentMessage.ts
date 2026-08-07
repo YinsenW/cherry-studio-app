@@ -15,6 +15,7 @@ import { getAssistantProvider } from '@/services/ProviderService'
 import { createStreamProcessor } from '@/services/StreamProcessingService'
 import { topicService } from '@/services/TopicService'
 import type { Assistant, Topic } from '@/types/assistant'
+import { ChunkType } from '@/types/chunk'
 import type { Message, MessageBlock } from '@/types/message'
 import { addAbortController } from '@/utils/abortController'
 import { createAssistantMessage } from '@/utils/messageUtils/create'
@@ -44,6 +45,7 @@ export async function sendAgentMessage(
   assistant: Assistant,
   topicId: Topic['id']
 ) {
+  let streamProcessor: ReturnType<typeof createStreamProcessor> | null = null
   try {
     if (userMessage.blocks.length === 0) {
       logger.warn('sendAgentMessage: No blocks in the provided message.')
@@ -78,7 +80,9 @@ export async function sendAgentMessage(
       assistant,
       startTime: Date.now()
     })
-    const streamProcessor = createStreamProcessor(callbacks)
+    streamProcessor = createStreamProcessor(callbacks)
+    const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) =>
+      streamProcessor?.(chunk)
 
     // 3. 读取历史并转换为 pi 上下文
     const allMessages = await messageDatabase.getMessagesByTopicId(topicId)
@@ -97,7 +101,7 @@ export async function sendAgentMessage(
     const agentService = new AgentService(assistant.model!, provider, tools, undefined, contextMessages as never[])
 
     // 5. 事件 → chunk → 现有块流
-    agentService.subscribe(createAgentEventToChunk(chunk => streamProcessor(chunk)))
+    agentService.subscribe(createAgentEventToChunk(chunk => processChunk(chunk)))
 
     // 中止：绑定到现有「暂停/停止」机制
     addAbortController(userMessage.id, () => agentService.abort())
@@ -106,6 +110,15 @@ export async function sendAgentMessage(
     await agentService.prompt(userText || '')
   } catch (error) {
     logger.error('Error in sendAgentMessage:', error as Error)
+    // 让错误在聊天 UI 可见（不再静默无响应）
+    streamProcessor?.({
+      type: ChunkType.ERROR,
+      error: {
+        code: 'AGENT_ERROR',
+        message: error instanceof Error ? error.message : String(error)
+      }
+    })
+    streamProcessor?.({ type: ChunkType.BLOCK_COMPLETE })
     try {
       await topicService.updateTopic(topicId, { isLoading: false })
     } catch {
