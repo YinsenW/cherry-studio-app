@@ -1,19 +1,20 @@
 import { act, renderHook } from '@testing-library/react-native'
 import { Keyboard } from 'react-native'
 
+import { sendAgentMessage } from '@/agent/sendAgentMessage'
 import { presentDialog } from '@/componentsV2/base/Dialog'
 import { useMessageEdit } from '@/hooks/useMessageEdit'
 import { useMessageOperations } from '@/hooks/useMessageOperation'
-import {
-  editUserMessageAndRegenerate,
-  getUserMessage,
-  sendMessage as serviceSendMessage
-} from '@/services/MessagesService'
+import { editUserMessageAndRegenerate, getUserMessage } from '@/services/MessagesService'
 import { topicService } from '@/services/TopicService'
 import { type Message, UserMessageStatus } from '@/types/message'
 
 import { createMockAssistant, createMockFile, createMockModel, createMockTopic } from '../../__mocks__/testData'
 import { useMessageSend } from '../../hooks/useMessageSend'
+
+jest.mock('@/agent/sendAgentMessage', () => ({
+  sendAgentMessage: jest.fn()
+}))
 
 jest.mock('@/componentsV2/base/Dialog', () => ({
   presentDialog: jest.fn()
@@ -29,8 +30,7 @@ jest.mock('@/hooks/useMessageOperation', () => ({
 
 jest.mock('@/services/MessagesService', () => ({
   editUserMessageAndRegenerate: jest.fn(),
-  getUserMessage: jest.fn(),
-  sendMessage: jest.fn()
+  getUserMessage: jest.fn()
 }))
 
 jest.mock('@/services/TopicService', () => ({
@@ -49,7 +49,7 @@ const mockPresentDialog = presentDialog as jest.MockedFunction<typeof presentDia
 const mockUseMessageEdit = useMessageEdit as jest.MockedFunction<typeof useMessageEdit>
 const mockUseMessageOperations = useMessageOperations as jest.MockedFunction<typeof useMessageOperations>
 const mockGetUserMessage = getUserMessage as jest.MockedFunction<typeof getUserMessage>
-const mockServiceSendMessage = serviceSendMessage as jest.MockedFunction<typeof serviceSendMessage>
+const mockSendAgentMessage = sendAgentMessage as jest.MockedFunction<typeof sendAgentMessage>
 const mockEditUserMessageAndRegenerate = editUserMessageAndRegenerate as jest.MockedFunction<
   typeof editUserMessageAndRegenerate
 >
@@ -101,7 +101,7 @@ describe('useMessageSend', () => {
       blocks: []
     })
 
-    mockServiceSendMessage.mockResolvedValue(undefined)
+    mockSendAgentMessage.mockResolvedValue(undefined)
     mockEditUserMessageAndRegenerate.mockResolvedValue(undefined)
     mockTopicService.updateTopic.mockResolvedValue(undefined)
   })
@@ -141,7 +141,7 @@ describe('useMessageSend', () => {
         await result.current.sendMessage()
       })
 
-      expect(mockServiceSendMessage).not.toHaveBeenCalled()
+      expect(mockSendAgentMessage).not.toHaveBeenCalled()
       expect(props.clearInputs).not.toHaveBeenCalled()
     })
 
@@ -153,7 +153,7 @@ describe('useMessageSend', () => {
         await result.current.sendMessage()
       })
 
-      expect(mockServiceSendMessage).not.toHaveBeenCalled()
+      expect(mockSendAgentMessage).not.toHaveBeenCalled()
     })
 
     it('sends message with text', async () => {
@@ -169,7 +169,7 @@ describe('useMessageSend', () => {
           content: 'Hello world'
         })
       )
-      expect(mockServiceSendMessage).toHaveBeenCalled()
+      expect(mockSendAgentMessage).toHaveBeenCalled()
     })
 
     it('sends message with overrideText when provided', async () => {
@@ -201,7 +201,7 @@ describe('useMessageSend', () => {
           files
         })
       )
-      expect(mockServiceSendMessage).toHaveBeenCalled()
+      expect(mockSendAgentMessage).toHaveBeenCalled()
     })
 
     it('sends message with text and files', async () => {
@@ -230,7 +230,7 @@ describe('useMessageSend', () => {
         await result.current.sendMessage()
       })
 
-      expect(mockServiceSendMessage).toHaveBeenCalledWith(
+      expect(mockSendAgentMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           mentions
         }),
@@ -275,7 +275,7 @@ describe('useMessageSend', () => {
     })
 
     it('handles send error gracefully', async () => {
-      mockServiceSendMessage.mockRejectedValue(new Error('Send failed'))
+      mockSendAgentMessage.mockRejectedValue(new Error('Send failed'))
       const props = createDefaultProps({ text: 'Hello' })
       const { result } = renderHook(() => useMessageSend(props))
 
@@ -284,7 +284,7 @@ describe('useMessageSend', () => {
       })
 
       // Should not throw
-      expect(mockServiceSendMessage).toHaveBeenCalled()
+      expect(mockSendAgentMessage).toHaveBeenCalled()
     })
   })
 
@@ -346,7 +346,7 @@ describe('useMessageSend', () => {
         await result.current.sendMessage()
       })
 
-      expect(mockServiceSendMessage).not.toHaveBeenCalled()
+      expect(mockSendAgentMessage).not.toHaveBeenCalled()
     })
 
     it('handles edit error gracefully', async () => {
@@ -513,7 +513,7 @@ describe('useMessageSend', () => {
 
   describe('error handling with restoreInputs and presentDialog', () => {
     it('calls restoreInputs and presentDialog on send error', async () => {
-      mockServiceSendMessage.mockRejectedValue(new Error('Send failed'))
+      mockSendAgentMessage.mockRejectedValue(new Error('Send failed'))
       const restoreInputs = jest.fn()
 
       const props = createDefaultProps({
@@ -564,7 +564,7 @@ describe('useMessageSend', () => {
     })
 
     it('restores files along with text on error', async () => {
-      mockServiceSendMessage.mockRejectedValue(new Error('Send failed'))
+      mockSendAgentMessage.mockRejectedValue(new Error('Send failed'))
       const restoreInputs = jest.fn()
       const files = [createMockFile({ id: 'file-1' }), createMockFile({ id: 'file-2' })]
 

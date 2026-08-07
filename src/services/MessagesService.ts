@@ -9,25 +9,20 @@ import { ChunkType } from '@/types/chunk'
 import type { FileMetadata } from '@/types/file'
 import { FileTypes } from '@/types/file'
 import type { MainTextMessageBlock, Message, MessageBlock } from '@/types/message'
-import { AssistantMessageStatus, MessageBlockStatus, MessageBlockType } from '@/types/message'
+import { MessageBlockStatus, MessageBlockType } from '@/types/message'
 import { uuid } from '@/utils'
-import { addAbortController } from '@/utils/abortController'
 import {
   createAssistantMessage,
   createFileBlock,
   createImageBlock,
   createMainTextBlock,
   createMessage,
-  createTranslationBlock,
-  resetAssistantMessage
+  createTranslationBlock
 } from '@/utils/messageUtils/create'
 import { findMainTextBlocks } from '@/utils/messageUtils/find'
-import { getTopicQueue } from '@/utils/queue'
 
-import { fetchTopicNaming } from './ApiService'
 import { assistantService, getDefaultModel } from './AssistantService'
 import { BlockManager, createCallbacks } from './messageStreaming'
-import { transformMessagesAndFetch } from './OrchestrationService'
 import { getAssistantProvider } from './ProviderService'
 import type { StreamProcessorCallbacks } from './StreamProcessingService'
 import { createStreamProcessor } from './StreamProcessingService'
@@ -112,126 +107,6 @@ export function getUserMessage({
 
   // 不再需要手动合并ID
   return { message, blocks }
-}
-
-/**
- * 发送消息并处理助手回复
- * @param userMessage 已创建的用户消息
- * @param userMessageBlocks 用户消息关联的消息块
- * @param assistant 助手对象
- * @param topicId 主题ID
- * @param dispatch Redux dispatch 函数
- */
-export async function sendMessage(
-  userMessage: Message,
-  userMessageBlocks: MessageBlock[],
-  assistant: Assistant,
-  topicId: Topic['id']
-) {
-  try {
-    if (userMessage.blocks.length === 0) {
-      logger.warn('sendMessage: No blocks in the provided message.')
-      return
-    }
-
-    // add message to database
-    await saveMessageAndBlocksToDB(userMessage, userMessageBlocks)
-
-    const mentionedModels = userMessage.mentions
-
-    if (mentionedModels && mentionedModels.length > 0) {
-      await multiModelResponses(topicId, assistant, userMessage, mentionedModels)
-    } else {
-      const assistantMessage = createAssistantMessage(assistant.id, topicId, {
-        askId: userMessage.id,
-        model: assistant.model
-      })
-      await saveMessageAndBlocksToDB(assistantMessage, [])
-      await fetchAndProcessAssistantResponseImpl(topicId, assistant, assistantMessage)
-    }
-  } catch (error) {
-    logger.error('Error in sendMessage:', error)
-    await finishTopicLoading(topicId)
-  }
-}
-
-export async function regenerateAssistantMessage(
-  assistantMessage: Message,
-  assistant: Assistant,
-  options?: { skipLoadingStateManagement?: boolean }
-) {
-  const topicId = assistantMessage.topicId
-
-  try {
-    // 1. Use selector to get all messages for the topic
-    const allMessagesForTopic = await messageDatabase.getMessagesByTopicId(topicId)
-
-    // 2. Find the original user query (Restored Logic)
-    const originalUserQuery = allMessagesForTopic.find(m => m.id === assistantMessage.askId)
-
-    if (!originalUserQuery) {
-      logger.error(
-        `[regenerateAssistantResponseThunk] Original user query (askId: ${assistantMessage.askId}) not found for assistant message ${assistantMessage.id}. Cannot regenerate.`
-      )
-      return
-    }
-
-    // 3. Verify the assistant message itself exists in entities
-    const messageToResetEntity = await messageDatabase.getMessageById(assistantMessage.id)
-
-    if (!messageToResetEntity) {
-      // No need to check topicId again as selector implicitly handles it
-      logger.error(
-        `[regenerateAssistantResponseThunk] Assistant message ${assistantMessage.id} not found in entities despite being in the topic list. State might be inconsistent.`
-      )
-      return
-    }
-
-    // 4. Get Block IDs to delete
-    const blockIdsToDelete = [...(messageToResetEntity.blocks || [])]
-
-    // 5. Reset the message entity in Database
-    const resetAssistantMsg = resetAssistantMessage(
-      messageToResetEntity,
-      // Grouped message (mentioned model message) should not reset model and modelId, always use the original model
-      assistantMessage.mentions
-        ? {
-            status: AssistantMessageStatus.PENDING,
-            updatedAt: Date.now()
-          }
-        : {
-            status: AssistantMessageStatus.PENDING,
-            updatedAt: Date.now(),
-            model: assistant.model
-          }
-    )
-
-    await messageDatabase.upsertMessages(resetAssistantMsg)
-    // 6. Remove old blocks from Database
-    await cleanupMultipleBlocks(blockIdsToDelete)
-
-    // // 7. Update DB: Save the reset message state within the topic and delete old blocks
-    // // Fetch the current state *after* Database updates to get the latest message list
-    // // Use the selector to get the final ordered list of messages for the topic
-    // const finalMessagesToSave = await messageDatabase.getMessagesByTopicId(topicId)
-
-    // 7. Add fetch/process call to the queue
-    const assistantConfigForRegen = {
-      ...assistant,
-      ...(resetAssistantMsg.model ? { model: resetAssistantMsg.model } : {})
-    }
-
-    // Add the fetch/process call to the queue
-    await fetchAndProcessAssistantResponseImpl(topicId, assistantConfigForRegen, resetAssistantMsg)
-  } catch (error) {
-    logger.error('Error in regenerateAssistantMessage:', error)
-    throw error // Re-throw to allow caller to handle
-  } finally {
-    // Only manage loading state if not skipped (for batch operations)
-    if (!options?.skipLoadingStateManagement) {
-      await finishTopicLoading(topicId)
-    }
-  }
 }
 
 /**
@@ -646,125 +521,6 @@ export async function saveMessageAndBlocksToDB(message: Message, blocks: Message
   }
 }
 
-// Internal function extracted from sendMessage to handle fetching and processing assistant response
-export async function fetchAndProcessAssistantResponseImpl(
-  topicId: string,
-  assistant: Assistant,
-  assistantMessage: Message
-) {
-  const assistantMsgId = assistantMessage.id
-  const startTime = Date.now()
-  let callbacks: StreamProcessorCallbacks = {}
-
-  try {
-    await topicService.updateTopic(topicId, { isLoading: true })
-
-    // 创建 BlockManager 实例
-    const blockManager = new BlockManager({
-      saveUpdatedBlockToDB,
-      saveUpdatesToDB,
-      assistantMsgId,
-      topicId,
-      throttledBlockUpdate,
-      cancelThrottledBlockUpdate
-    })
-
-    const allMessagesForTopic = await messageDatabase.getMessagesByTopicId(topicId)
-    let messagesForContext: Message[] = []
-    const userMessageId = assistantMessage.askId
-    const userMessageIndex = allMessagesForTopic.findIndex(m => m?.id === userMessageId)
-
-    if (userMessageIndex === -1) {
-      logger.error(
-        `[fetchAndProcessAssistantResponseImpl] Triggering user message ${userMessageId} (askId of ${assistantMsgId}) not found. Falling back.`
-      )
-      const assistantMessageIndexFallback = allMessagesForTopic.findIndex(m => m?.id === assistantMsgId)
-      messagesForContext = (
-        assistantMessageIndexFallback !== -1
-          ? allMessagesForTopic.slice(0, assistantMessageIndexFallback)
-          : allMessagesForTopic
-      ).filter(m => m && !m.status?.includes('ing'))
-    } else {
-      const contextSlice = allMessagesForTopic.slice(0, userMessageIndex + 1)
-      messagesForContext = contextSlice.filter(m => m && !m.status?.includes('ing'))
-    }
-
-    callbacks = await createCallbacks({
-      blockManager,
-      topicId,
-      assistantMsgId,
-      saveUpdatesToDB,
-      assistant,
-      startTime
-    })
-    const streamProcessorCallbacks = createStreamProcessor(callbacks)
-
-    const abortController = new AbortController()
-    addAbortController(userMessageId!, () => abortController.abort())
-
-    await transformMessagesAndFetch(
-      {
-        messages: messagesForContext,
-        assistant,
-        topicId,
-        options: {
-          signal: abortController.signal,
-          timeout: 30000
-        }
-      },
-      streamProcessorCallbacks
-    )
-  } catch (error) {
-    logger.error('Error in fetchAndProcessAssistantResponseImpl:', error)
-
-    // 统一错误处理：确保 loading 状态被正确设置，避免队列任务卡住
-    try {
-      await callbacks.onError?.(error)
-    } catch (callbackError) {
-      logger.error('Error in onError callback:', callbackError as Error)
-    } finally {
-      // 确保无论如何都设置 loading 为 false（onError 回调中已设置，这里是保险）
-      await topicService.updateTopic(topicId, { isLoading: false })
-    }
-  } finally {
-    await finishTopicLoading(topicId)
-    await fetchTopicNaming(topicId)
-  }
-}
-
-// --- Helper Function for Multi-Model Dispatch ---
-// 多模型创建和发送请求的逻辑，用于用户消息多模型发送和重发
-export async function multiModelResponses(
-  topicId: string,
-  assistant: Assistant,
-  triggeringMessage: Message, // userMessage or messageToResend
-  mentionedModels: Model[]
-) {
-  logger.info('multiModelResponses')
-  const assistantMessageStubs: Message[] = []
-  const tasksToQueue: { assistantConfig: Assistant; messageStub: Message }[] = []
-
-  for (const mentionedModel of mentionedModels) {
-    const assistantForThisMention = { ...assistant, model: mentionedModel }
-    const assistantMessage = createAssistantMessage(assistant.id, topicId, {
-      askId: triggeringMessage.id,
-      model: mentionedModel,
-      modelId: mentionedModel.id
-    })
-    await messageDatabase.upsertMessages(assistantMessage)
-    assistantMessageStubs.push(assistantMessage)
-    tasksToQueue.push({ assistantConfig: assistantForThisMention, messageStub: assistantMessage })
-  }
-
-  const queue = getTopicQueue(topicId)
-  const queuedTasks = tasksToQueue.map(task =>
-    queue.add(async () => {
-      await fetchAndProcessAssistantResponseImpl(topicId, task.assistantConfig, task.messageStub)
-    })
-  )
-
-  await Promise.all(queuedTasks)
-}
 // --- End Helper Function ---
 
 /**
