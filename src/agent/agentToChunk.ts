@@ -106,9 +106,21 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
         break
       }
 
-      case 'agent_end':
+      case 'agent_end': {
+        // 如果最终 assistant 消息带 errorMessage，把错误暴露到 UI（否则无响应难排查）
+        const last = event.messages?.[event.messages.length - 1]
+        if (last && 'errorMessage' in last && last.errorMessage) {
+          emit({
+            type: ChunkType.ERROR,
+            error: {
+              code: 'AGENT_ERROR',
+              message: last.errorMessage
+            }
+          })
+        }
         emit({ type: ChunkType.BLOCK_COMPLETE })
         break
+      }
 
       default:
         break

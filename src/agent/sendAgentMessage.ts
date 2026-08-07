@@ -1,6 +1,7 @@
 import { messageDatabase } from '@database'
 
 import { SystemTool } from '@/aiCore/tools/SystemTools'
+import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
 import { loggerService } from '@/services/LoggerService'
 import {
   cancelThrottledBlockUpdate,
@@ -87,9 +88,12 @@ export async function sendAgentMessage(
       assistant.model?.provider ?? ''
     )
 
-    // 4. 构造 agent
+    // 4. 构造 agent：全量 SystemTool（提醒/日历/时间/网络/快捷指令）+ Android 系统能力工具
     const provider = await getAssistantProvider(assistant)
-    const tools = Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool))
+    const tools = [
+      ...Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool))
+    ]
     const agentService = new AgentService(assistant.model!, provider, tools, undefined, contextMessages as never[])
 
     // 5. 事件 → chunk → 现有块流

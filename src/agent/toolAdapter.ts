@@ -1,6 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Tool as PiTool } from '@earendil-works/pi-ai'
-import type { Tool } from 'ai'
+import { jsonSchema, type Tool } from 'ai'
 import type { ZodType } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
 
@@ -47,7 +47,8 @@ export function agentToolToAiSdkTool(agentTool: PiTool): Tool & { execute: NonNu
   const toolAny = agentTool as unknown as AgentTool
   return {
     description: toolAny.description ?? agentTool.name,
-    inputSchema: agentTool.parameters as Tool['inputSchema'],
+    // AI SDK 需要 Schema 对象（非裸 JSON）。pi 的 parameters 是 JSON Schema 形状（typebox），用 jsonSchema 包装。
+    inputSchema: jsonSchema(toolAny.parameters as Record<string, unknown>),
     execute: async (args, options) => {
       const result = await toolAny.execute('', args, options?.abortSignal, undefined)
       const text = result.content
