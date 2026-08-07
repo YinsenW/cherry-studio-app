@@ -65,3 +65,12 @@ Agent 模式的工具集 = `SystemTool`（提醒/日历/时间/网络/快捷指�
 | LLM 子任务 | `createLlmTools` | 总结、翻译、提取 JSON、分析（复用用户模型独立请求） |
 | 免费 API | `ApiTools` | 天气（Open-Meteo）、汇率（er-api）——均无 key |
 | MCP 服务器 | `createMcpTools` | 用户已启用的全部 MCP 工具（GitHub/数据库等） |
+
+## 服务端 API 工具组（BYOK，替代装不了的 CLI）
+
+手机沙盒跑不了 `lark-cli`（Node/子进程）和 `gh`（二进制），但两者都有 HTTP API，直接做成 agent 工具（用户提供凭证）：
+
+| 工具组 | 文件 | 工具 |
+|---|---|---|
+| 飞书 | `FeishuTools` | 发文本消息、查用户、查群、搜群、建/读云文档、搜日历、列/建日程、查审批（需飞书自建应用 App ID+Secret） |
+| GitHub | `GithubTools` | 查账号、列/查/建仓库、列/建 issue、建评论、列/建 PR、建 gist、搜仓库、读文件、列我分配的 issue（需 PAT，至少 repo 权限） |

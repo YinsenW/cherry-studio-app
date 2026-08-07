@@ -4,6 +4,8 @@ import { SystemTool } from '@/aiCore/tools/SystemTools'
 import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
 import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
 import { ComputeTool } from '@/aiCore/tools/SystemTools/ComputeTools'
+import { FeishuTool } from '@/aiCore/tools/SystemTools/FeishuTools'
+import { GithubTool } from '@/aiCore/tools/SystemTools/GithubTools'
 import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
 import { createMcpTools } from '@/aiCore/tools/SystemTools/McpTools'
 import { fetchTopicNaming } from '@/services/ApiService'
@@ -85,7 +87,7 @@ export async function runAgentSession(
       assistant.model?.provider ?? ''
     )
 
-    // 3. 构造 agent 工具集：系统工具 + Android 能力 + 计算工具 + LLM 子任务 + 免费 API + 用户 MCP 服务器
+    // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const provider = await getAssistantProvider(assistant)
     const mcpTools = await createMcpTools(assistant)
     const tools = [
@@ -93,6 +95,8 @@ export async function runAgentSession(
       ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(ComputeTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(ApiTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(FeishuTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(GithubTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(createLlmTools(assistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...mcpTools
     ]
