@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import Share from 'react-native-share'
 import { useDispatch } from 'react-redux'
 
+import { regenerateAgentMessage } from '@/agent/sendAgentMessage'
 import { presentDialog } from '@/componentsV2'
 import { dismissTextEditSheet, presentTextEditSheet } from '@/componentsV2/features/Sheet/TextEditSheet'
 import { loggerService } from '@/services/LoggerService'
@@ -17,6 +18,7 @@ import {
   regenerateAssistantMessage,
   regenerateResponsesForUserMessage
 } from '@/services/MessagesService'
+import { preferenceService } from '@/services/PreferenceService'
 import { setEditingMessage } from '@/store/runtime'
 import type { Assistant } from '@/types/assistant'
 import type { Message } from '@/types/message'
@@ -110,6 +112,13 @@ export const useMessageActions = ({ message, assistant }: UseMessageActionsProps
     }
 
     try {
+      // Agent 模式下重新生成也走 agent 通道（而不是 chat 通道）
+      const isAgentMode = preferenceService.getCached('agent.mode_enabled') ?? false
+      if (isAgentMode && message.role === 'assistant') {
+        await regenerateAgentMessage(message, assistant)
+        return
+      }
+
       if (message.role === 'user') {
         // For user messages: regenerate all linked assistant responses
         await regenerateResponsesForUserMessage(message, assistant)
