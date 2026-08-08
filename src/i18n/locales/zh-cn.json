@@ -404,6 +404,12 @@
           "description": "获取当前时间"
         }
       },
+      "connectivity": {
+        "connected": "已连接",
+        "failed": "连接失败",
+        "status": "连接状态",
+        "test": "测试连接"
+      },
       "market": {
         "add": {
           "success": "已添加 {{mcp_name}}"
@@ -412,6 +418,7 @@
       },
       "server": {
         "add": "添加 MCP 服务器",
+        "add_failed": "添加 MCP 服务器失败，请重试",
         "delete": {
           "content": "确定要删除此 MCP 服务器吗？此操作无法撤销。",
           "title": "删除服务器"
@@ -420,6 +427,26 @@
         "empty": {
           "add": "前往添加MCP服务器",
           "label": "暂无MCP服务器..."
+        },
+        "import": {
+          "description": "支持标准 mcpServers 配置；仅导入可在移动端连接的远程 Streamable HTTP 服务。",
+          "errors": {
+            "DUPLICATE_NAME": "MCP 服务名称重复：{{name}}。",
+            "INVALID_JSON": "JSON 格式无效，请检查逗号、引号和括号。",
+            "INVALID_ROOT": "未找到 MCP 配置。请粘贴 mcpServers、servers 或单个服务配置。",
+            "INVALID_SERVER": "MCP 服务配置无效，请检查名称、请求头和字段类型。",
+            "INVALID_URL": "{{name}} 的地址无效；请使用 http:// 或 https:// URL。",
+            "MISSING_ENDPOINT": "{{name}} 缺少远程服务地址（url 或 baseUrl）。",
+            "NO_SERVERS": "配置中没有可导入的 MCP 服务。",
+            "SAVE_FAILED": "无法保存 MCP 配置，请重试。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的远程 Streamable HTTP 服务。移动端不支持 stdio、SSE 或内置服务导入。"
+          },
+          "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
+          "preview": "将添加 {{count}} 个 MCP 服务器：{{names}}",
+          "submit": "添加服务器",
+          "success": "已添加 {{count}} 个 MCP 服务器",
+          "title": "粘贴 JSON 配置",
+          "validate": "验证配置"
         },
         "new": "新 MCP 服务器",
         "selected": "已选择{{num}}个MCP服务器",
@@ -430,12 +457,6 @@
         "inMemory": "内置",
         "sse": "服务器发送事件",
         "streamableHttp": "StreamableHTTP"
-      },
-      "connectivity": {
-        "status": "连接状态",
-        "connected": "已连接",
-        "failed": "连接失败",
-        "test": "测试连接"
       }
     },
     "menu": {

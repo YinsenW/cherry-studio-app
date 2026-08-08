@@ -404,6 +404,12 @@
           "description": "現在時刻を取得する"
         }
       },
+      "connectivity": {
+        "connected": "接続済み",
+        "failed": "失敗",
+        "status": "接続状態",
+        "test": "接続テスト"
+      },
       "market": {
         "add": {
           "success": "{{mcp_name}} を追加しました"
@@ -412,6 +418,7 @@
       },
       "server": {
         "add": "MCP サーバーを追加",
+        "add_failed": "MCP サーバーを追加できませんでした。もう一度お試しください。",
         "delete": {
           "content": "この MCP サーバーを削除してもよろしいですか？この操作は元に戻せません。",
           "title": "サーバーを削除"
@@ -420,6 +427,26 @@
         "empty": {
           "add": "MCPサーバーを追加する",
           "label": "MCPサーバーがありません..."
+        },
+        "import": {
+          "description": "標準の mcpServers 設定に対応し、モバイルで接続可能なリモート Streamable HTTP サービスのみを取り込みます。",
+          "errors": {
+            "DUPLICATE_NAME": "MCP サーバー名が重複しています：{{name}}。",
+            "INVALID_JSON": "JSON の形式が正しくありません。カンマ、引用符、括弧を確認してください。",
+            "INVALID_ROOT": "MCP 設定が見つかりません。mcpServers、servers、または単一サーバー設定を貼り付けてください。",
+            "INVALID_SERVER": "MCP サーバー設定が無効です。名前、ヘッダー、フィールド型を確認してください。",
+            "INVALID_URL": "{{name}} のエンドポイントが無効です。http:// または https:// URL を使用してください。",
+            "MISSING_ENDPOINT": "{{name}} にリモートエンドポイント（url または baseUrl）がありません。",
+            "NO_SERVERS": "取り込める MCP サーバーが設定にありません。",
+            "SAVE_FAILED": "MCP 設定を保存できませんでした。もう一度お試しください。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} は対応しているリモート Streamable HTTP サービスではありません。モバイルでは stdio、SSE、内蔵サービスの取り込みはできません。"
+          },
+          "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
+          "preview": "{{count}} 個の MCP サーバーを追加します：{{names}}",
+          "submit": "サーバーを追加",
+          "success": "{{count}} 個の MCP サーバーを追加しました",
+          "title": "JSON 設定を貼り付け",
+          "validate": "設定を検証"
         },
         "new": "新しい MCP サーバー",
         "selected": "選択された{{num}}個のMCPサーバー",
@@ -430,12 +457,6 @@
         "inMemory": "内蔵",
         "sse": "サーバー送信イベント",
         "streamableHttp": "StreamableHTTP"
-      },
-      "connectivity": {
-        "status": "接続状態",
-        "connected": "接続済み",
-        "failed": "失敗",
-        "test": "接続テスト"
       }
     },
     "menu": {

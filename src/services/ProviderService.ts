@@ -32,7 +32,7 @@ import { CHERRYAI_PROVIDER } from '@/config/providers'
 import { loggerService } from '@/services/LoggerService'
 import type { Assistant, Model, Provider } from '@/types/assistant'
 
-import { getDefaultModel } from './AssistantService'
+import { getAssistantModel, getDefaultModel } from './AssistantService'
 
 const logger = loggerService.withContext('ProviderService')
 
@@ -503,11 +503,9 @@ export class ProviderService {
    * @returns Promise resolving to the provider
    */
   public async getAssistantProvider(assistant: Assistant): Promise<Provider> {
-    if (assistant.model?.provider) {
-      const provider = await this.getProvider(assistant.model.provider)
-      if (provider) {
-        return provider
-      }
+    const provider = await this.getProvider(getAssistantModel(assistant).provider)
+    if (provider) {
+      return provider
     }
 
     // Fallback to default provider

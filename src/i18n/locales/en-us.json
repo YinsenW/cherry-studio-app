@@ -404,6 +404,12 @@
           "description": "Get the current time"
         }
       },
+      "connectivity": {
+        "connected": "Connected",
+        "failed": "Failed",
+        "status": "Connection",
+        "test": "Test"
+      },
       "market": {
         "add": {
           "success": "Added {{mcp_name}}"
@@ -412,6 +418,7 @@
       },
       "server": {
         "add": "Add MCP Server",
+        "add_failed": "Failed to add MCP server. Please try again.",
         "delete": {
           "content": "Are you sure you want to delete this MCP server? This action cannot be undone.",
           "title": "Delete Server"
@@ -420,6 +427,26 @@
         "empty": {
           "add": "Go to add MCP server",
           "label": "No MCP servers available..."
+        },
+        "import": {
+          "description": "Supports standard mcpServers configurations and imports remote Streamable HTTP services that can run on mobile.",
+          "errors": {
+            "DUPLICATE_NAME": "Duplicate MCP server name: {{name}}.",
+            "INVALID_JSON": "The JSON is invalid. Check commas, quotes, and brackets.",
+            "INVALID_ROOT": "No MCP configuration was found. Paste mcpServers, servers, or one server configuration.",
+            "INVALID_SERVER": "The MCP server configuration is invalid. Check its name, headers, and field types.",
+            "INVALID_URL": "{{name}} has an invalid endpoint. Use an http:// or https:// URL.",
+            "MISSING_ENDPOINT": "{{name}} is missing a remote endpoint (url or baseUrl).",
+            "NO_SERVERS": "There are no MCP servers to import in this configuration.",
+            "SAVE_FAILED": "Could not save the MCP configuration. Please try again.",
+            "UNSUPPORTED_TRANSPORT": "{{name}} is not a supported remote Streamable HTTP service. Mobile imports do not support stdio, SSE, or built-in services."
+          },
+          "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
+          "preview": "{{count}} MCP server(s) will be added: {{names}}",
+          "submit": "Add Servers",
+          "success": "Added {{count}} MCP server(s)",
+          "title": "Paste JSON Configuration",
+          "validate": "Validate"
         },
         "new": "New MCP Server",
         "selected": "{{num}} MCP servers selected",
@@ -430,12 +457,6 @@
         "inMemory": "built-in",
         "sse": "Server-Sent Events",
         "streamableHttp": "StreamableHTTP"
-      },
-      "connectivity": {
-        "status": "Connection",
-        "connected": "Connected",
-        "failed": "Failed",
-        "test": "Test"
       }
     },
     "menu": {

@@ -6,6 +6,7 @@ import { AddModelSheet } from '@/componentsV2/features/SettingsScreen/providers/
 import ExpandInputSheet from '@/componentsV2/features/Sheet/ExpandInputSheet'
 import { HeadersEditSheet } from '@/componentsV2/features/Sheet/HeadersEditSheet'
 import { McpDescriptionSheet } from '@/componentsV2/features/Sheet/McpDescriptionSheet'
+import { McpJsonImportSheet } from '@/componentsV2/features/Sheet/McpJsonImportSheet'
 import { McpServerSheet } from '@/componentsV2/features/Sheet/McpServerSheet'
 import { McpToolSheet } from '@/componentsV2/features/Sheet/McpToolSheet'
 import ModelSheet from '@/componentsV2/features/Sheet/ModelSheet'
@@ -49,6 +50,7 @@ const SheetManager: React.FC = () => {
       <ProviderCheckSheet />
       <HeadersEditSheet />
       <McpDescriptionSheet />
+      <McpJsonImportSheet />
       <McpToolSheet />
       <ToolCallDetailSheet />
       <ThinkingDetailSheet />

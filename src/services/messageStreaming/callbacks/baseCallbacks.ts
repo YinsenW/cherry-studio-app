@@ -41,7 +41,7 @@ export const createBaseCallbacks = async (deps: BaseCallbacksDependencies) => {
     }
 
     // 如果没有活跃的block，从message中查找最新的block作为备选
-    const targetMessage = message || (await messageDatabase.getMessagesByTopicId(assistantMsgId))
+    const targetMessage = message || (await messageDatabase.getMessageById(assistantMsgId))
 
     if (targetMessage) {
       const allBlocks = await findAllBlocks(targetMessage)
@@ -108,7 +108,7 @@ export const createBaseCallbacks = async (deps: BaseCallbacksDependencies) => {
         const changes = {
           status: isErrorTypeAbort ? MessageBlockStatus.PAUSED : MessageBlockStatus.ERROR
         }
-        blockManager.smartBlockUpdate(possibleBlockId, changes, blockManager.lastBlockType!, true)
+        await blockManager.smartBlockUpdate(possibleBlockId, changes, blockManager.lastBlockType!, true)
       }
 
       const errorBlock = createErrorBlock(assistantMsgId, serializableError, { status: MessageBlockStatus.SUCCESS })

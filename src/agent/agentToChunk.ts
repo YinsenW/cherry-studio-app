@@ -14,16 +14,18 @@ function makeToolResponse(
   status: MCPToolResponse['status'],
   resultText?: string
 ): MCPToolResponse {
+  const remoteTool = /^mcp:([^:]+):(.+)$/.exec(name)
+  const toolName = remoteTool?.[2] ?? name
   return {
     id: toolCallId,
     tool: {
-      id: `builtin_${name}`,
-      serverId: 'builtin',
-      serverName: 'System',
-      name,
-      description: name,
+      id: remoteTool ? name : `builtin_${name}`,
+      serverId: remoteTool?.[1] ?? 'builtin',
+      serverName: remoteTool ? 'MCP' : 'System',
+      name: toolName,
+      description: toolName,
       inputSchema: { type: 'object', properties: {} },
-      isBuiltIn: true,
+      isBuiltIn: !remoteTool,
       type: 'mcp'
     },
     toolCallId,
@@ -41,14 +43,14 @@ function makeToolResponse(
  * - 工具执行 → MCP_TOOL_PENDING/MCP_TOOL_COMPLETE（复用现有 ToolBlock 渲染，且**不触发**中间件自动执行——因为 chunk 在这里直接喂给 streamProcessor，不走 aiCore 中间件链）
  * - agent 结束 → BLOCK_COMPLETE（结束消息状态）
  */
-export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
+export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<void>) {
   let textStarted = false
-  let pendingTool: { id: string; name: string; args: Record<string, unknown> } | null = null
+  const pendingTools = new Map<string, { name: string; args: Record<string, unknown> }>()
 
-  return (event: PiAgentEvent) => {
+  return async (event: PiAgentEvent) => {
     switch (event.type) {
       case 'agent_start':
-        emit({ type: ChunkType.LLM_RESPONSE_CREATED })
+        await emit({ type: ChunkType.LLM_RESPONSE_CREATED })
         break
 
       case 'message_start':
@@ -59,7 +61,7 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
         const deltaEvent = event.assistantMessageEvent
         if (deltaEvent.type === 'text_delta') {
           if (!textStarted) {
-            emit({ type: ChunkType.TEXT_START })
+            await emit({ type: ChunkType.TEXT_START })
             textStarted = true
           }
           // 关键：发累积文本而不是增量 delta。
@@ -70,41 +72,51 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
             .filter(part => part.type === 'text')
             .map(part => (part as { text: string }).text)
             .join('')
-          emit({ type: ChunkType.TEXT_DELTA, text: accumulatedText })
+          await emit({ type: ChunkType.TEXT_DELTA, text: accumulatedText })
         }
         break
       }
 
       case 'message_end': {
-        if (event.message.role === 'assistant' && textStarted) {
+        if (event.message.role === 'assistant') {
           // 关键：TEXT_COMPLETE 必须带完整文本，否则 onTextComplete 会用空字符串
           // 覆盖 block 的 content（模拟器上验证出的根因：文本被冲掉）。
           const fullText = event.message.content
             .filter(part => part.type === 'text')
             .map(part => (part as { text: string }).text)
             .join('')
-          emit({ type: ChunkType.TEXT_COMPLETE, text: fullText })
-          textStarted = false
+
+          // Most providers emit text_delta events. Some compatible providers,
+          // however, only expose the completed message. Preserve that response
+          // instead of treating a successful turn as an empty assistant block.
+          if (textStarted || fullText) {
+            if (!textStarted) {
+              await emit({ type: ChunkType.TEXT_START })
+            }
+            await emit({ type: ChunkType.TEXT_COMPLETE, text: fullText })
+            textStarted = false
+          }
         }
         break
       }
 
       case 'tool_execution_start':
-        emit({
+        await emit({
           type: ChunkType.MCP_TOOL_PENDING,
-          responses: [makeToolResponse(event.toolName, event.toolCallId, event.args as Record<string, unknown>, 'invoking')]
+          responses: [makeToolResponse(event.toolName, event.toolCallId, event.args as Record<string, unknown>, 'pending')]
         })
-        pendingTool = { id: event.toolCallId, name: event.toolName, args: event.args as Record<string, unknown> }
+        pendingTools.set(event.toolCallId, { name: event.toolName, args: event.args as Record<string, unknown> })
         break
 
       case 'tool_execution_end': {
+        const pendingTool = pendingTools.get(event.toolCallId)
         const resultText =
           event.result?.content
             ?.filter(part => part.type === 'text')
             .map(part => (part as { text: string }).text)
             .join('') ?? ''
         const status = event.isError ? 'error' : ('done' as const)
-        emit({
+        await emit({
           type: ChunkType.MCP_TOOL_COMPLETE,
           responses: [
             makeToolResponse(
@@ -116,7 +128,7 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
             )
           ]
         })
-        pendingTool = null
+        pendingTools.delete(event.toolCallId)
         break
       }
 
@@ -124,15 +136,17 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void) {
         // 如果最终 assistant 消息带 errorMessage，把错误暴露到 UI（否则无响应难排查）
         const last = event.messages?.[event.messages.length - 1]
         if (last && 'errorMessage' in last && last.errorMessage) {
-          emit({
+          const wasAborted = last.stopReason === 'aborted'
+          await emit({
             type: ChunkType.ERROR,
             error: {
               code: 'AGENT_ERROR',
-              message: last.errorMessage
+              message: wasAborted ? 'Request was aborted.' : last.errorMessage
             }
           })
+          break
         }
-        emit({ type: ChunkType.BLOCK_COMPLETE })
+        await emit({ type: ChunkType.BLOCK_COMPLETE })
         break
       }
 

@@ -10,6 +10,7 @@ import type {
 } from 'openai/resources'
 
 import { isFunctionCallingModel, isVisionModel } from '@/config/models'
+import { getAssistantModel } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
 import { mcpClientService } from '@/services/mcp/McpClientService'
 import { mcpService } from '@/services/McpService'
@@ -840,11 +841,7 @@ export function mcpToolCallResponseToAwsBedrockMessage(
  * @returns 是否启用工具使用
  */
 export function isSupportedToolUse(assistant: Assistant) {
-  if (assistant.model) {
-    return isFunctionCallingModel(assistant.model) && isToolUseModeFunction(assistant)
-  }
-
-  return false
+  return isFunctionCallingModel(getAssistantModel(assistant)) && isToolUseModeFunction(assistant)
 }
 
 /**

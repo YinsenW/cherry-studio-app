@@ -12,7 +12,8 @@ import {
   SearchInput
 } from '@/componentsV2'
 import { McpMarketContent } from '@/componentsV2/features/MCP/McpMarketContent'
-import { Menu, Plus, Store } from '@/componentsV2/icons/LucideIcon'
+import { presentMcpJsonImportSheet } from '@/componentsV2/features/Sheet/McpJsonImportSheet'
+import { FileText, Menu, Plus, Store } from '@/componentsV2/icons/LucideIcon'
 import { useMcpServers } from '@/hooks/useMcp'
 import { useSearch } from '@/hooks/useSearch'
 import { useSkeletonLoading } from '@/hooks/useSkeletonLoading'
@@ -68,8 +69,19 @@ export default function McpScreen() {
       isActive: false,
       installedAt: Date.now()
     }
-    await mcpService.createMcpServer(newMcp)
-    navigation.navigate('McpDetailScreen', { mcpId: newMcp.id })
+    try {
+      await mcpService.createMcpServer(newMcp)
+      navigation.navigate('McpDetailScreen', { mcpId: newMcp.id })
+    } catch {
+      toast.show(t('mcp.server.add_failed'), { color: 'red', duration: 3000 })
+    }
+  }
+
+  const handleImportMcpJson = () => {
+    presentMcpJsonImportSheet(async servers => {
+      await mcpService.createMcpServers(servers)
+      toast.show(t('mcp.server.import.success', { count: servers.length }), { duration: 3000 })
+    })
   }
 
   return (
@@ -86,6 +98,10 @@ export default function McpScreen() {
               {
                 icon: <Plus size={24} />,
                 onPress: handleAddMcp
+              },
+              {
+                icon: <FileText size={24} />,
+                onPress: handleImportMcpJson
               },
               {
                 icon: <Store size={24} />,

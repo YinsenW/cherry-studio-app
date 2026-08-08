@@ -21,6 +21,15 @@ let currentHeaders: Record<string, string> = {}
 let onSaveCallback: ((headers: Record<string, string>) => void) | null = null
 let updateContentCallback: ((jsonText: string) => void) | null = null
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(headerValue => typeof headerValue === 'string')
+  )
+}
+
 export const presentHeadersEditSheet = (
   headers: Record<string, string>,
   onSave: (newHeaders: Record<string, string>) => void
@@ -71,7 +80,10 @@ export const HeadersEditSheet: React.FC = () => {
 
   const handleSave = () => {
     try {
-      const parsed = JSON.parse(jsonText) as Record<string, string>
+      const parsed: unknown = JSON.parse(jsonText)
+      if (!isStringRecord(parsed)) {
+        throw new Error('Headers must be a string record')
+      }
       onSaveCallback?.(parsed)
       dismissHeadersEditSheet()
     } catch {

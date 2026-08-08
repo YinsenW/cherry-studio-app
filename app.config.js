@@ -19,7 +19,7 @@ module.exports = {
     scheme: 'cherry-studio',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
-    entryPoint: './src/app.js',
+    entryPoint: './index.js',
     updates: {
       url: 'https://u.expo.dev/64c8017f-aa46-4f25-8488-ca87b2d704cc'
     },

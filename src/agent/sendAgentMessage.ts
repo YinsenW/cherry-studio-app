@@ -10,6 +10,7 @@ import { GithubTool } from '@/aiCore/tools/SystemTools/GithubTools'
 import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
 import { createMcpTools } from '@/aiCore/tools/SystemTools/McpTools'
 import { fetchTopicNaming } from '@/services/ApiService'
+import { getAssistantModel } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
 import {
   cancelThrottledBlockUpdate,
@@ -27,7 +28,7 @@ import type { Assistant, Topic } from '@/types/assistant'
 import { ChunkType } from '@/types/chunk'
 import type { Message, MessageBlock } from '@/types/message'
 import { AssistantMessageStatus } from '@/types/message'
-import { addAbortController } from '@/utils/abortController'
+import { addAbortController, removeAbortController } from '@/utils/abortController'
 import { createAssistantMessage, resetAssistantMessage } from '@/utils/messageUtils/create'
 import { getMainTextContent } from '@/utils/messageUtils/find'
 
@@ -39,6 +40,23 @@ import { aiSdkToolToAgentTool } from './toolAdapter'
 const logger = loggerService.withContext('sendAgentMessage')
 
 const AGENT_TIMEOUT_MS = 120_000
+
+/**
+ * Normal chat requests fall back to the app default model when an assistant
+ * has not selected one yet. Keep the agent path aligned so a freshly seeded
+ * default assistant can send its first message.
+ */
+function resolveAgentAssistant(assistant: Assistant): Assistant {
+  const model = getAssistantModel(assistant)
+  if (assistant.model === model) {
+    return assistant
+  }
+
+  return {
+    ...assistant,
+    model
+  }
+}
 
 /**
  * 执行一次 agent 会话，把 pi 事件流转换为现有块流并落库。
@@ -56,6 +74,11 @@ export async function runAgentSession(
   topicId: Topic['id']
 ) {
   let streamProcessor: ReturnType<typeof createStreamProcessor> | null = null
+  let unsubscribeAgentEvents: (() => void) | null = null
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let abortAgent: (() => void) | null = null
+  const resolvedAssistant = resolveAgentAssistant(assistant)
+
   try {
     await topicService.updateTopic(topicId, { isLoading: true })
 
@@ -73,24 +96,23 @@ export async function runAgentSession(
       topicId,
       assistantMsgId: assistantMessage.id,
       saveUpdatesToDB,
-      assistant,
+      assistant: resolvedAssistant,
       startTime: Date.now()
     })
     streamProcessor = createStreamProcessor(callbacks)
-    const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) =>
-      streamProcessor?.(chunk)
+    const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) => streamProcessor!(chunk)
 
     // 2. 读取历史并转换为 pi 上下文（排除本次 assistant 消息）
     const allMessages = await messageDatabase.getMessagesByTopicId(topicId)
     const contextMessages = await messagesToPiContext(
       allMessages.filter(m => m.id !== assistantMessage.id),
-      assistant.model?.id ?? '',
-      assistant.model?.provider ?? ''
+      resolvedAssistant.model!.id,
+      resolvedAssistant.model!.provider
     )
 
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
-    const provider = await getAssistantProvider(assistant)
-    const mcpTools = await createMcpTools(assistant)
+    const provider = await getAssistantProvider(resolvedAssistant)
+    const mcpTools = await createMcpTools(resolvedAssistant)
     const tools = [
       ...Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
@@ -99,16 +121,17 @@ export async function runAgentSession(
       ...Object.entries(FeishuTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(GithubTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(OAuthTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(createLlmTools(assistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
+      ...Object.entries(createLlmTools(resolvedAssistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...mcpTools
     ]
-    const agentService = new AgentService(assistant.model!, provider, tools, undefined, contextMessages as never[])
+    const agentService = new AgentService(resolvedAssistant.model!, provider, tools, undefined, contextMessages as never[])
 
     // 4. 事件 → chunk → 现有块流
-    agentService.subscribe(createAgentEventToChunk(chunk => processChunk(chunk)))
+    unsubscribeAgentEvents = agentService.subscribe(createAgentEventToChunk(processChunk))
 
     // 5. 中止：绑定到现有「暂停/停止」机制
-    addAbortController(userMessage.id, () => agentService.abort())
+    abortAgent = () => agentService.abort()
+    addAbortController(userMessage.id, abortAgent)
 
     const userText = await getMainTextContent(userMessage)
 
@@ -117,24 +140,44 @@ export async function runAgentSession(
     await Promise.race([
       agentService.prompt(userText || ''),
       new Promise<never>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           agentService.abort()
           reject(new Error('Agent 响应超时（120s），已自动停止。请检查网络或重试。'))
         }, AGENT_TIMEOUT_MS)
       })
     ])
+
+    // pi normally emits agent_end, but do not leave a message stuck in a
+    // loading state if a provider completes without a terminal UI event.
+    const finalAssistantMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    if (
+      finalAssistantMessage &&
+      (finalAssistantMessage.status === AssistantMessageStatus.PENDING ||
+        finalAssistantMessage.status === AssistantMessageStatus.PROCESSING)
+    ) {
+      await streamProcessor({ type: ChunkType.BLOCK_COMPLETE })
+    }
+    await streamProcessor.drain()
   } catch (error) {
     logger.error('Error in agent session:', error as Error)
     // 让错误在聊天 UI 可见（不再静默无响应）
-    streamProcessor?.({
+    await streamProcessor?.({
       type: ChunkType.ERROR,
       error: {
         code: 'AGENT_ERROR',
         message: error instanceof Error ? error.message : String(error)
       }
     })
-    streamProcessor?.({ type: ChunkType.BLOCK_COMPLETE })
+    await streamProcessor?.drain()
   } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+    if (abortAgent) {
+      removeAbortController(userMessage.id, abortAgent)
+    }
+    unsubscribeAgentEvents?.()
+
     // 收尾：与普通聊天路径一致，必须复位 loading 并触发话题命名
     try {
       await topicService.updateTopic(topicId, { isLoading: false })
@@ -168,13 +211,14 @@ export async function sendAgentMessage(
 
   await saveMessageAndBlocksToDB(userMessage, userMessageBlocks)
 
-  const assistantMessage = createAssistantMessage(assistant.id, topicId, {
+  const resolvedAssistant = resolveAgentAssistant(assistant)
+  const assistantMessage = createAssistantMessage(resolvedAssistant.id, topicId, {
     askId: userMessage.id,
-    model: assistant.model
+    model: resolvedAssistant.model
   })
   await saveMessageAndBlocksToDB(assistantMessage, [])
 
-  await runAgentSession(userMessage, assistantMessage, assistant, topicId)
+  await runAgentSession(userMessage, assistantMessage, resolvedAssistant, topicId)
 }
 
 /**
@@ -186,6 +230,7 @@ export async function sendAgentMessage(
  */
 export async function regenerateAgentMessage(assistantMessage: Message, assistant: Assistant) {
   const topicId = assistantMessage.topicId
+  const resolvedAssistant = resolveAgentAssistant(assistant)
 
   try {
     // 1. 找到原始用户消息
@@ -206,7 +251,7 @@ export async function regenerateAgentMessage(assistantMessage: Message, assistan
     const resetMsg = resetAssistantMessage(messageToReset, {
       status: AssistantMessageStatus.PENDING,
       updatedAt: Date.now(),
-      model: assistant.model
+      model: resolvedAssistant.model
     })
     await messageDatabase.upsertMessages(resetMsg)
 
@@ -214,7 +259,7 @@ export async function regenerateAgentMessage(assistantMessage: Message, assistan
     await cleanupMultipleBlocks(blockIdsToDelete)
 
     // 4. 走 agent 通道
-    await runAgentSession(originalUserQuery, resetMsg, assistant, topicId)
+    await runAgentSession(originalUserQuery, resetMsg, resolvedAssistant, topicId)
   } catch (error) {
     logger.error('Error in regenerateAgentMessage:', error as Error)
     throw error

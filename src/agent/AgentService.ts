@@ -47,7 +47,7 @@ export class AgentService {
     })
   }
 
-  subscribe(callback: (event: Parameters<Parameters<Agent['subscribe']>[0]>[0]) => void) {
+  subscribe(callback: Parameters<Agent['subscribe']>[0]) {
     return this.agent.subscribe(callback)
   }
 

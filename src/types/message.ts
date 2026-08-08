@@ -5,7 +5,7 @@ import type { SerializedError } from './error'
 import type { FileMetadata } from './file'
 import type { GenerateImageResponse } from './image'
 import type { KnowledgeReference } from './knowledge'
-import type { MCPServer, MCPToolResponse } from './mcp'
+import type { MCPServer, MCPToolResponse, NormalToolResponse } from './mcp'
 import type { WebSearchResponse, WebSearchSource } from './websearch'
 
 // MessageBlock 类型枚举 - 根据实际API返回特性优化
@@ -101,7 +101,7 @@ export interface ToolMessageBlock extends BaseMessageBlock {
   arguments?: Record<string, any>
   content?: string | object
   metadata?: BaseMessageBlock['metadata'] & {
-    rawMcpToolResponse?: MCPToolResponse
+    rawMcpToolResponse?: MCPToolResponse | NormalToolResponse
   }
 }
 

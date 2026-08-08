@@ -32,7 +32,7 @@ export const createTextCallbacks = (deps: TextCallbacksDependencies) => {
           status: MessageBlockStatus.STREAMING
         }
         mainTextBlockId = blockManager.initialPlaceholderBlockId!
-        blockManager.smartBlockUpdate(mainTextBlockId, changes, MessageBlockType.MAIN_TEXT, true)
+        await blockManager.smartBlockUpdate(mainTextBlockId, changes, MessageBlockType.MAIN_TEXT, true)
         logger.debug('onTextStart', changes)
       } else if (!mainTextBlockId) {
         const newBlock = createMainTextBlock(assistantMsgId, '', {
@@ -56,7 +56,7 @@ export const createTextCallbacks = (deps: TextCallbacksDependencies) => {
           status: MessageBlockStatus.STREAMING,
           citationReferences: citationBlockId ? [{ citationBlockId, citationBlockSource }] : []
         }
-        blockManager.smartBlockUpdate(mainTextBlockId!, blockChanges, MessageBlockType.MAIN_TEXT)
+        await blockManager.smartBlockUpdate(mainTextBlockId!, blockChanges, MessageBlockType.MAIN_TEXT)
         logger.info('onTextChunk', blockChanges)
       }
     },
@@ -67,7 +67,7 @@ export const createTextCallbacks = (deps: TextCallbacksDependencies) => {
           content: finalText,
           status: MessageBlockStatus.SUCCESS
         }
-        blockManager.smartBlockUpdate(mainTextBlockId, changes, MessageBlockType.MAIN_TEXT, true)
+        await blockManager.smartBlockUpdate(mainTextBlockId, changes, MessageBlockType.MAIN_TEXT, true)
         mainTextBlockId = null
         logger.debug('onTextComplete', changes)
       } else {

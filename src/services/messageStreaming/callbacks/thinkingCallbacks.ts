@@ -25,7 +25,7 @@ export const createThinkingCallbacks = (deps: ThinkingCallbacksDependencies) => 
           thinking_millsec: 0
         }
         thinkingBlockId = blockManager.initialPlaceholderBlockId!
-        blockManager.smartBlockUpdate(thinkingBlockId, changes, MessageBlockType.THINKING, true)
+        await blockManager.smartBlockUpdate(thinkingBlockId, changes, MessageBlockType.THINKING, true)
       } else if (!thinkingBlockId) {
         const newBlock = createThinkingBlock(assistantMsgId, '', {
           status: MessageBlockStatus.STREAMING,
@@ -43,11 +43,11 @@ export const createThinkingCallbacks = (deps: ThinkingCallbacksDependencies) => 
           status: MessageBlockStatus.STREAMING,
           thinking_millsec: thinking_millsec || 0
         }
-        blockManager.smartBlockUpdate(thinkingBlockId, blockChanges, MessageBlockType.THINKING)
+        await blockManager.smartBlockUpdate(thinkingBlockId, blockChanges, MessageBlockType.THINKING)
       }
     },
 
-    onThinkingComplete: (finalText: string, final_thinking_millsec?: number) => {
+    onThinkingComplete: async (finalText: string, final_thinking_millsec?: number) => {
       if (thinkingBlockId) {
         const changes = {
           type: MessageBlockType.THINKING,
@@ -55,7 +55,7 @@ export const createThinkingCallbacks = (deps: ThinkingCallbacksDependencies) => 
           status: MessageBlockStatus.SUCCESS,
           thinking_millsec: final_thinking_millsec || 0
         }
-        blockManager.smartBlockUpdate(thinkingBlockId, changes, MessageBlockType.THINKING, true)
+        await blockManager.smartBlockUpdate(thinkingBlockId, changes, MessageBlockType.THINKING, true)
         thinkingBlockId = null
       } else {
         console.warn(

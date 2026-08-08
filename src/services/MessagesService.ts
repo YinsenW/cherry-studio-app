@@ -21,7 +21,7 @@ import {
 } from '@/utils/messageUtils/create'
 import { findMainTextBlocks } from '@/utils/messageUtils/find'
 
-import { assistantService, getDefaultModel } from './AssistantService'
+import { assistantService, getAssistantModel, getDefaultModel } from './AssistantService'
 import { BlockManager, createCallbacks } from './messageStreaming'
 import { getAssistantProvider } from './ProviderService'
 import type { StreamProcessorCallbacks } from './StreamProcessingService'
@@ -59,8 +59,7 @@ export function getUserMessage({
   mentions?: Model[]
   usage?: Usage
 }): { message: Message; blocks: MessageBlock[] } {
-  const defaultModel = getDefaultModel()
-  const model = assistant.model || defaultModel
+  const model = getAssistantModel(assistant)
   const messageId = uuid() // Generate ID here
   const blocks: MessageBlock[] = []
   const blockIds: string[] = []
@@ -251,7 +250,7 @@ export async function editUserMessageAndRegenerate(
     // 7. Create new assistant message and trigger regeneration
     const newAssistantMessage = createAssistantMessage(assistant.id, topicId, {
       askId: userMessageId,
-      model: assistant.model
+      model: getAssistantModel(assistant)
     })
     await saveMessageAndBlocksToDB(newAssistantMessage, [])
 
@@ -334,7 +333,7 @@ type BlockUpdatePayload = Partial<MessageBlock>
 
 const pendingBlockUpdates = new Map<string, BlockUpdatePayload>()
 let blockFlushTimer: ReturnType<typeof setTimeout> | null = null
-let blockFlushInFlight: Promise<void> | null = null
+let blockFlushQueue: Promise<void> = Promise.resolve()
 
 const mergeBlockUpdates = (
   existing: BlockUpdatePayload | undefined,
@@ -348,10 +347,8 @@ const mergeBlockUpdates = (
 }
 
 const waitForCurrentBlockFlush = async () => {
-  if (!blockFlushInFlight) return
-
   try {
-    await blockFlushInFlight
+    await blockFlushQueue
   } catch (error) {
     console.error('[BlockBatch] Pending flush failed:', error)
   }
@@ -397,18 +394,11 @@ const flushPendingBlockUpdates = async (ids?: string[]): Promise<void> => {
 }
 
 const executeBlockFlush = async (ids?: string[]) => {
-  await waitForCurrentBlockFlush()
-
-  const flushPromise = flushPendingBlockUpdates(ids)
-  blockFlushInFlight = flushPromise
-
-  try {
-    await flushPromise
-  } finally {
-    if (blockFlushInFlight === flushPromise) {
-      blockFlushInFlight = null
-    }
-  }
+  const flushPromise = blockFlushQueue.then(() => flushPendingBlockUpdates(ids))
+  // Keep later updates usable after a failed batch while preserving the error
+  // for the caller that initiated this particular flush.
+  blockFlushQueue = flushPromise.catch(() => undefined)
+  await flushPromise
 }
 
 const scheduleBlockFlush = () => {
@@ -418,7 +408,9 @@ const scheduleBlockFlush = () => {
 
   blockFlushTimer = setTimeout(() => {
     blockFlushTimer = null
-    void executeBlockFlush()
+    void executeBlockFlush().catch(error => {
+      logger.error('Failed to flush throttled block updates', error as Error)
+    })
   }, BLOCK_UPDATE_BATCH_INTERVAL)
 }
 
@@ -450,7 +442,9 @@ export const throttledBlockUpdate = async (id: string, blockUpdate: BlockUpdateP
  * 取消单个块的批量更新，并等待当前写操作完成。
  */
 export const cancelThrottledBlockUpdate = async (id: string) => {
-  pendingBlockUpdates.delete(id)
+  // A block may transition from streamed text to a tool/citation immediately.
+  // Persist its final buffered value before the transition instead of dropping it.
+  await flushSpecificBlocks([id])
 
   if (pendingBlockUpdates.size === 0 && blockFlushTimer) {
     clearTimeout(blockFlushTimer)
@@ -621,7 +615,7 @@ export async function fetchTranslateThunk(assistantMessageId: string, message: M
         status: MessageBlockStatus.STREAMING
       }
       newBlock.id = blockManager.initialPlaceholderBlockId!
-      blockManager.smartBlockUpdate(newBlock.id, changes, MessageBlockType.TRANSLATION, true)
+      await blockManager.smartBlockUpdate(newBlock.id, changes, MessageBlockType.TRANSLATION, true)
       logger.debug('onTextStart', changes)
     }
   }
@@ -632,7 +626,7 @@ export async function fetchTranslateThunk(assistantMessageId: string, message: M
         content: text,
         status: MessageBlockStatus.STREAMING
       }
-      blockManager.smartBlockUpdate(newBlock.id, blockChanges, MessageBlockType.TRANSLATION)
+      await blockManager.smartBlockUpdate(newBlock.id, blockChanges, MessageBlockType.TRANSLATION)
       logger.info('onTextChunk', blockChanges)
     }
   }
@@ -645,7 +639,7 @@ export async function fetchTranslateThunk(assistantMessageId: string, message: M
         content: finalText,
         status: MessageBlockStatus.SUCCESS
       }
-      blockManager.smartBlockUpdate(newBlock.id, changes, MessageBlockType.TRANSLATION, true)
+      await blockManager.smartBlockUpdate(newBlock.id, changes, MessageBlockType.TRANSLATION, true)
       logger.debug('onTextComplete', changes)
     } else {
       logger.warn(
@@ -683,17 +677,15 @@ export async function fetchTranslateThunk(assistantMessageId: string, message: M
 
   try {
     streamProcessorCallbacks({ type: ChunkType.LLM_RESPONSE_CREATED })
-    return (
-      (
-        await AI.completions(modelId, aiSdkParams, {
-          ...middlewareConfig,
-          assistant: assistantForRequest,
-          topicId: message.topicId,
-          callType: 'chat',
-          uiMessages: [message]
-        })
-      ).getText() || ''
-    )
+    const completion = await AI.completions(modelId, aiSdkParams, {
+      ...middlewareConfig,
+      assistant: assistantForRequest,
+      topicId: message.topicId,
+      callType: 'chat',
+      uiMessages: [message]
+    })
+    await streamProcessorCallbacks.drain()
+    return completion.getText() || ''
   } catch (error: any) {
     logger.error('Error during translation:', error)
     return ''

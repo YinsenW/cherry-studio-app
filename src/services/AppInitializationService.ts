@@ -112,6 +112,11 @@ const APP_DATA_MIGRATIONS: AppDataMigration[] = [
 
 const LATEST_APP_DATA_VERSION = APP_DATA_MIGRATIONS[APP_DATA_MIGRATIONS.length - 1]?.version ?? 0
 
+// App startup can mount more than once in development and restore flows can
+// overlap with component effects. Keep a single initialization transaction so
+// migrations, provider cache setup and initial-topic creation never race.
+let activeInitialization: Promise<void> | null = null
+
 export function resetAppInitializationState(): void {
   preferenceService.clearCache()
   assistantService.clearCache()
@@ -150,7 +155,7 @@ async function ensureCurrentTopic(): Promise<void> {
   }
 }
 
-export async function runAppDataMigrations(): Promise<void> {
+async function runAppDataMigrationsImpl(): Promise<void> {
   const currentVersion = await preferenceService.get('app.initialization_version')
 
   if (currentVersion >= LATEST_APP_DATA_VERSION) {
@@ -193,6 +198,18 @@ export async function runAppDataMigrations(): Promise<void> {
 
   // Ensure a valid current topic exists
   await ensureCurrentTopic()
+}
+
+export async function runAppDataMigrations(): Promise<void> {
+  if (activeInitialization) {
+    return activeInitialization
+  }
+
+  activeInitialization = runAppDataMigrationsImpl().finally(() => {
+    activeInitialization = null
+  })
+
+  return activeInitialization
 }
 
 export function getAppDataVersion(): number {

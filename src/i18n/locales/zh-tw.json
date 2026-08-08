@@ -404,6 +404,12 @@
           "description": "取得目前時間"
         }
       },
+      "connectivity": {
+        "connected": "已連線",
+        "failed": "失敗",
+        "status": "連線狀態",
+        "test": "測試連線"
+      },
       "market": {
         "add": {
           "success": "已添加 {{mcp_name}}"
@@ -412,6 +418,7 @@
       },
       "server": {
         "add": "新增 MCP 伺服器",
+        "add_failed": "新增 MCP 伺服器失敗，請重試。",
         "delete": {
           "content": "確定要刪除此 MCP 伺服器嗎？此操作無法撤銷。",
           "title": "刪除伺服器"
@@ -420,6 +427,26 @@
         "empty": {
           "add": "前往新增MCP伺服器",
           "label": "暫無MCP伺服器..."
+        },
+        "import": {
+          "description": "支援標準 mcpServers 設定；僅匯入可在行動裝置連線的遠端 Streamable HTTP 服務。",
+          "errors": {
+            "DUPLICATE_NAME": "MCP 伺服器名稱重複：{{name}}。",
+            "INVALID_JSON": "JSON 格式無效，請檢查逗號、引號與括號。",
+            "INVALID_ROOT": "找不到 MCP 設定。請貼上 mcpServers、servers 或單一伺服器設定。",
+            "INVALID_SERVER": "MCP 伺服器設定無效，請檢查名稱、請求標頭與欄位類型。",
+            "INVALID_URL": "{{name}} 的位址無效；請使用 http:// 或 https:// URL。",
+            "MISSING_ENDPOINT": "{{name}} 缺少遠端服務位址（url 或 baseUrl）。",
+            "NO_SERVERS": "設定中沒有可匯入的 MCP 伺服器。",
+            "SAVE_FAILED": "無法儲存 MCP 設定，請重試。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的遠端 Streamable HTTP 服務。行動裝置不支援匯入 stdio、SSE 或內建服務。"
+          },
+          "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
+          "preview": "將新增 {{count}} 個 MCP 伺服器：{{names}}",
+          "submit": "新增伺服器",
+          "success": "已新增 {{count}} 個 MCP 伺服器",
+          "title": "貼上 JSON 設定",
+          "validate": "驗證設定"
         },
         "new": "新 MCP 伺服器",
         "selected": "已選擇{{num}}個MCP伺服器",
@@ -430,12 +457,6 @@
         "inMemory": "內建",
         "sse": "伺服器傳送事件",
         "streamableHttp": "StreamableHTTP"
-      },
-      "connectivity": {
-        "status": "連線狀態",
-        "connected": "已連線",
-        "failed": "失敗",
-        "test": "測試連線"
       }
     },
     "menu": {

@@ -90,7 +90,7 @@ export class BlockManager {
       }
 
       await messageBlockDatabase.updateOneBlock({ id: blockId, changes })
-      this.deps.saveUpdatedBlockToDB(blockId, this.deps.assistantMsgId, this.deps.topicId)
+      await this.deps.saveUpdatedBlockToDB(blockId, this.deps.assistantMsgId, this.deps.topicId)
       this._lastBlockType = blockType
     } else {
       this._activeBlockInfo = { id: blockId, type: blockType } // 更新活跃块信息

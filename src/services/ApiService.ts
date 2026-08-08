@@ -19,7 +19,7 @@ import { findFileBlocks, getMainTextContent } from '@/utils/messageUtils/find'
 import { hasApiKey } from '@/utils/providerUtils'
 
 import AiProviderNew from '../aiCore/index_new'
-import { assistantService, getDefaultModel } from './AssistantService'
+import { assistantService, getAssistantModel, getDefaultModel } from './AssistantService'
 import { mcpService } from './McpService'
 import { getAssistantProvider } from './ProviderService'
 import type { StreamProcessorCallbacks } from './StreamProcessingService'
@@ -37,15 +37,17 @@ export async function fetchChatCompletion({
   topicId,
   uiMessages
 }: FetchChatCompletionParams) {
-  const AI = new AiProviderNew(assistant.model || getDefaultModel())
+  const assistantModel = getAssistantModel(assistant)
+  const assistantForRequest = assistant.model ? assistant : { ...assistant, model: assistantModel }
+  const AI = new AiProviderNew(assistantModel)
   const provider = AI.getActualProvider()
 
   const mcpTools: MCPTool[] = []
 
   onChunkReceived({ type: ChunkType.LLM_RESPONSE_CREATED })
 
-  if (isPromptToolUse(assistant) || isSupportedToolUse(assistant)) {
-    mcpTools.push(...(await fetchAssistantMcpTools(assistant)))
+  if (isPromptToolUse(assistantForRequest) || isSupportedToolUse(assistantForRequest)) {
+    mcpTools.push(...(await fetchAssistantMcpTools(assistantForRequest)))
   }
 
   if (prompt) {
@@ -63,7 +65,7 @@ export async function fetchChatCompletion({
     modelId,
     capabilities,
     webSearchPluginConfig
-  } = await buildStreamTextParams(messages, assistant, provider, {
+  } = await buildStreamTextParams(messages, assistantForRequest, provider, {
     mcpTools: mcpTools,
     webSearchProviderId: assistant.webSearchProviderId,
     requestOptions: options
@@ -72,11 +74,11 @@ export async function fetchChatCompletion({
   const middlewareConfig: AiSdkMiddlewareConfig = {
     streamOutput: assistant.settings?.streamOutput ?? true,
     onChunk: onChunkReceived,
-    model: assistant.model,
+    model: assistantModel,
     enableReasoning: capabilities.enableReasoning,
-    isPromptToolUse: isPromptToolUse(assistant),
-    isSupportedToolUse: isSupportedToolUse(assistant),
-    isImageGenerationEndpoint: isDedicatedImageGenerationModel(assistant.model || getDefaultModel()),
+    isPromptToolUse: isPromptToolUse(assistantForRequest),
+    isSupportedToolUse: isSupportedToolUse(assistantForRequest),
+    isImageGenerationEndpoint: isDedicatedImageGenerationModel(assistantModel),
     enableWebSearch: capabilities.enableWebSearch,
     enableGenerateImage: capabilities.enableGenerateImage,
     enableUrlContext: capabilities.enableUrlContext,
@@ -89,7 +91,7 @@ export async function fetchChatCompletion({
   try {
     await AI.completions(modelId, aiSdkParams, {
       ...middlewareConfig,
-      assistant,
+      assistant: assistantForRequest,
       topicId,
       callType: 'chat',
       uiMessages
@@ -246,16 +248,14 @@ export async function fetchTopicNaming(topicId: string, regenerate: boolean = fa
   }
 
   try {
-    return (
-      (
-        await AI.completions(modelId, aiSdkParams, {
-          ...middlewareConfig,
-          assistant: assistantForRequest,
-          topicId,
-          callType: 'summary'
-        })
-      ).getText() || t('topics.new_topic')
-    )
+    const completion = await AI.completions(modelId, aiSdkParams, {
+      ...middlewareConfig,
+      assistant: assistantForRequest,
+      topicId,
+      callType: 'summary'
+    })
+    await streamProcessorCallbacks.drain()
+    return completion.getText() || t('topics.new_topic')
   } catch (error) {
     logger.error('Error during topic naming:', error)
     return ''

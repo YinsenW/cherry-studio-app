@@ -1,6 +1,6 @@
 import React from 'react'
 
-import type { MCPToolResponse } from '@/types/mcp'
+import type { MCPToolResponse, NormalToolResponse } from '@/types/mcp'
 import type { ToolMessageBlock } from '@/types/message'
 
 import MessageMcpTool from './MessageMcpTool'
@@ -12,8 +12,15 @@ interface Props {
 }
 const prefix = 'builtin_'
 
-const ChooseTool = (toolResponse: MCPToolResponse): { label: React.ReactNode; body: React.ReactNode } | null => {
-  let toolName = toolResponse.tool.name
+const ChooseTool = (
+  toolResponse: MCPToolResponse | NormalToolResponse
+): { label: React.ReactNode; body: React.ReactNode } | null => {
+  if (!('serverId' in toolResponse.tool)) {
+    return null
+  }
+
+  const mcpToolResponse = toolResponse as MCPToolResponse
+  let toolName = mcpToolResponse.tool.name
 
   if (toolName.startsWith(prefix)) {
     toolName = toolName.slice(prefix.length)
@@ -23,7 +30,7 @@ const ChooseTool = (toolResponse: MCPToolResponse): { label: React.ReactNode; bo
     case 'web_search':
     case 'web_search_preview':
       return {
-        label: <MessageWebSearchToolTitle toolResponse={toolResponse} />,
+        label: <MessageWebSearchToolTitle toolResponse={mcpToolResponse} />,
         body: null
       }
     default:

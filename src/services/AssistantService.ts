@@ -38,7 +38,7 @@ import {
 } from '@/constants'
 import i18n from '@/i18n'
 import { loggerService } from '@/services/LoggerService'
-import type { Assistant, AssistantSettings } from '@/types/assistant'
+import type { Assistant, AssistantSettings, Model } from '@/types/assistant'
 import { uuid } from '@/utils'
 
 const logger = loggerService.withContext('AssistantService')
@@ -814,6 +814,17 @@ export async function getDefaultAssistant(): Promise<Assistant> {
  */
 export function getDefaultModel() {
   return SYSTEM_MODELS.defaultModel[0]
+}
+
+/**
+ * Resolve the model that should be used for an assistant request.
+ *
+ * System assistants deliberately keep `model` unset and use `defaultModel`
+ * instead. Centralising this fallback prevents the message metadata, provider
+ * lookup and request builder from silently selecting different models.
+ */
+export function getAssistantModel(assistant: Pick<Assistant, 'model' | 'defaultModel'>): Model {
+  return assistant.model ?? assistant.defaultModel ?? getDefaultModel()
 }
 
 /**

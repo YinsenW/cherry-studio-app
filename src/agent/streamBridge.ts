@@ -126,11 +126,14 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
         stream.end(finalMessage)
       } catch (error) {
         logger.error('streamBridge executor 调用失败:', error)
+        const aborted = options?.signal?.aborted === true
         const errorMessage: AssistantMessage = {
-          ...buildPartial('error'),
-          errorMessage: error instanceof Error ? error.message : String(error)
+          ...buildPartial(aborted ? 'aborted' : 'error'),
+          // Keep cancellation recognisable by the existing streaming callbacks,
+          // which render it as a paused message instead of a failed message.
+          errorMessage: aborted ? 'Request was aborted.' : error instanceof Error ? error.message : String(error)
         }
-        stream.push({ type: 'error', reason: 'error', error: errorMessage })
+        stream.push({ type: 'error', reason: aborted ? 'aborted' : 'error', error: errorMessage })
         stream.end(errorMessage)
       }
     })()

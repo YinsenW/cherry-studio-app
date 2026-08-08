@@ -11,14 +11,14 @@ import XStack from '@/componentsV2/layout/XStack'
 import YStack from '@/componentsV2/layout/YStack'
 import { useTheme } from '@/hooks/useTheme'
 import type { MCPToolResponseStatus } from '@/types/mcp'
-import type { MCPTool } from '@/types/tool'
+import type { BaseTool, MCPTool } from '@/types/tool'
 import { isIOS26 } from '@/utils/device'
 import { truncateFormattedJson } from '@/utils/json'
 
 const SHEET_NAME = 'tool-call-detail-sheet'
 
 interface ToolCallDetailData {
-  tool: MCPTool
+  tool: BaseTool | MCPTool
   arguments: Record<string, unknown> | undefined
   status: MCPToolResponseStatus
   response?: any

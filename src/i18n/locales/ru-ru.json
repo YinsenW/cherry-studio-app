@@ -404,6 +404,12 @@
           "description": "Получить текущее время"
         }
       },
+      "connectivity": {
+        "connected": "Подключено",
+        "failed": "Ошибка",
+        "status": "Подключение",
+        "test": "Тест"
+      },
       "market": {
         "add": {
           "success": "Добавлено {{mcp_name}}"
@@ -412,6 +418,7 @@
       },
       "server": {
         "add": "Добавить MCP сервер",
+        "add_failed": "Не удалось добавить MCP-сервер. Повторите попытку.",
         "delete": {
           "content": "Вы уверены, что хотите удалить этот MCP-сервер? Это действие нельзя отменить.",
           "title": "Удалить сервер"
@@ -420,6 +427,26 @@
         "empty": {
           "add": "Перейти к добавлению сервера MCP",
           "label": "Нет доступных серверов MCP..."
+        },
+        "import": {
+          "description": "Поддерживаются стандартные конфигурации mcpServers; импортируются только удалённые сервисы Streamable HTTP, доступные на мобильном устройстве.",
+          "errors": {
+            "DUPLICATE_NAME": "Повторяющееся имя MCP-сервера: {{name}}.",
+            "INVALID_JSON": "Некорректный JSON. Проверьте запятые, кавычки и скобки.",
+            "INVALID_ROOT": "Конфигурация MCP не найдена. Вставьте mcpServers, servers или конфигурацию одного сервера.",
+            "INVALID_SERVER": "Конфигурация MCP-сервера некорректна. Проверьте имя, заголовки и типы полей.",
+            "INVALID_URL": "Для {{name}} указан неверный адрес. Используйте URL с http:// или https://.",
+            "MISSING_ENDPOINT": "Для {{name}} не указан удалённый адрес (url или baseUrl).",
+            "NO_SERVERS": "В конфигурации нет MCP-серверов для импорта.",
+            "SAVE_FAILED": "Не удалось сохранить конфигурацию MCP. Повторите попытку.",
+            "UNSUPPORTED_TRANSPORT": "{{name}} не является поддерживаемым удалённым сервисом Streamable HTTP. Мобильный импорт не поддерживает stdio, SSE и встроенные сервисы."
+          },
+          "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
+          "preview": "Будет добавлено MCP-серверов: {{count}} — {{names}}",
+          "submit": "Добавить серверы",
+          "success": "Добавлено MCP-серверов: {{count}}",
+          "title": "Вставить конфигурацию JSON",
+          "validate": "Проверить конфигурацию"
         },
         "new": "Новый MCP сервер",
         "selected": "Выбрано {{num}} серверов MCP",
@@ -430,12 +457,6 @@
         "inMemory": "встроенный",
         "sse": "События, отправляемые сервером",
         "streamableHttp": "StreamableHTTP"
-      },
-      "connectivity": {
-        "status": "Подключение",
-        "connected": "Подключено",
-        "failed": "Ошибка",
-        "test": "Тест"
       }
     },
     "menu": {

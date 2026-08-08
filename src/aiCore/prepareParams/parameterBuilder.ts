@@ -18,7 +18,7 @@ import {
   isSupportedThinkingTokenModel,
   isWebSearchModel
 } from '@/config/models'
-import { getAssistantSettings, getDefaultModel } from '@/services/AssistantService'
+import { getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
 import { preferenceService } from '@/services/PreferenceService'
 import type { StreamTextParams } from '@/types/aiCoretypes'
@@ -69,7 +69,7 @@ export async function buildStreamTextParams(
 }> {
   const { mcpTools } = options
 
-  const model = assistant.model || getDefaultModel()
+  const model = getAssistantModel(assistant)
   const aiSdkProviderId = getAiSdkProviderId(provider)
 
   let { maxTokens } = getAssistantSettings(assistant)

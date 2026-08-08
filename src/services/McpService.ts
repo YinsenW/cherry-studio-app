@@ -452,6 +452,42 @@ export class McpService {
   }
 
   /**
+   * Persist a JSON-import batch as one database transaction, then publish one
+   * coherent cache update. This avoids a partially imported MCP list when a
+   * write fails midway through a multi-server import.
+   */
+  public async createMcpServers(mcpServers: MCPServer[]): Promise<MCPServer[]> {
+    if (mcpServers.length === 0) {
+      return []
+    }
+
+    const ids = new Set<string>()
+    for (const server of mcpServers) {
+      if (ids.has(server.id)) {
+        throw new Error(`Duplicate MCP server ID in import: ${server.id}`)
+      }
+      ids.add(server.id)
+    }
+
+    await mcpDatabase.upsertMcps(mcpServers)
+
+    if (this.allMcpServersCache.size > 0 || this.allMcpServersCacheTimestamp !== null) {
+      for (const server of mcpServers) {
+        this.allMcpServersCache.set(server.id, server)
+      }
+    }
+
+    for (const server of mcpServers) {
+      this.notifyMcpServerSubscribers(server.id)
+    }
+    this.notifyGlobalSubscribers()
+    this.notifyAllMcpServersSubscribers()
+
+    logger.info(`Created ${mcpServers.length} MCP server(s) from import`)
+    return mcpServers
+  }
+
+  /**
    * Update an MCP server (optimistic)
    *
    * Updates immediately in cache, then persists.
@@ -517,6 +553,8 @@ export class McpService {
     try {
       // Delete from database
       await mcpDatabase.deleteMcpById(mcpId)
+      await mcpClientService.closeClient(mcpId)
+      this.invalidateToolsCache(mcpId)
       logger.info('MCP server deleted successfully:', mcpId)
     } catch (error) {
       // Rollback on failure
@@ -755,7 +793,12 @@ export class McpService {
 
       // Invalidate tools cache when configuration changes that might affect tools
       // (e.g., baseUrl, headers, type, disabledTools changes)
-      if ('baseUrl' in updates || 'headers' in updates || 'type' in updates || 'disabledTools' in updates) {
+      const connectionConfigurationChanged = 'baseUrl' in updates || 'headers' in updates || 'type' in updates
+      if (connectionConfigurationChanged) {
+        await mcpClientService.closeClient(mcpId)
+      }
+
+      if (connectionConfigurationChanged || 'disabledTools' in updates) {
         this.invalidateToolsCache(mcpId)
       }
 

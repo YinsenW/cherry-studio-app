@@ -16,6 +16,9 @@ export const removeAbortController = (id: string, abortFn: () => void) => {
     if (index !== -1) {
       callbackArr.splice(index, 1)
     }
+    if (callbackArr.length === 0) {
+      abortMap.delete(id)
+    }
   } else {
     abortMap.delete(id)
   }

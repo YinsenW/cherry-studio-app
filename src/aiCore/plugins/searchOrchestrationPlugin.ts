@@ -15,7 +15,7 @@ import {
   SEARCH_SUMMARY_PROMPT_KNOWLEDGE_ONLY,
   SEARCH_SUMMARY_PROMPT_WEB_ONLY
 } from '@/config/prompts'
-import { getDefaultModel } from '@/services/AssistantService'
+import { getAssistantModel } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
 import { getProviderByModel } from '@/services/ProviderService'
 import type { Assistant } from '@/types/assistant'
@@ -112,7 +112,7 @@ async function analyzeSearchIntent(
   const formattedPrompt = prompt.replace('{chat_history}', chatHistory).replace('{question}', question)
 
   // 获取模型和provider信息
-  const model = assistant.model || getDefaultModel()
+  const model = getAssistantModel(assistant)
   const provider = getProviderByModel(model)
 
   if (!provider) {

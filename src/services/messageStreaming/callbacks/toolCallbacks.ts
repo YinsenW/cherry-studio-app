@@ -1,5 +1,5 @@
 import { loggerService } from '@/services/LoggerService'
-import type { MCPToolResponse } from '@/types/mcp'
+import type { MCPToolResponse, NormalToolResponse } from '@/types/mcp'
 import type { ToolMessageBlock } from '@/types/message'
 import { MessageBlockStatus, MessageBlockType } from '@/types/message'
 import { WebSearchSource } from '@/types/websearch'
@@ -23,7 +23,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
   let citationBlockId: string | null = null
 
   return {
-    onToolCallPending: (toolResponse: MCPToolResponse) => {
+    onToolCallPending: async (toolResponse: MCPToolResponse | NormalToolResponse) => {
       if (blockManager.hasInitialPlaceholder) {
         const changes = {
           type: MessageBlockType.TOOL,
@@ -32,7 +32,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
           metadata: { rawMcpToolResponse: toolResponse }
         }
         toolBlockId = blockManager.initialPlaceholderBlockId!
-        blockManager.smartBlockUpdate(toolBlockId, changes, MessageBlockType.TOOL)
+        await blockManager.smartBlockUpdate(toolBlockId, changes, MessageBlockType.TOOL)
         toolCallIdToBlockIdMap.set(toolResponse.id, toolBlockId)
       } else if (toolResponse.status === 'pending') {
         const toolBlock = createToolBlock(assistantMsgId, toolResponse.id, {
@@ -41,7 +41,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
           metadata: { rawMcpToolResponse: toolResponse }
         })
         toolBlockId = toolBlock.id
-        blockManager.handleBlockTransition(toolBlock, MessageBlockType.TOOL)
+        await blockManager.handleBlockTransition(toolBlock, MessageBlockType.TOOL)
         toolCallIdToBlockIdMap.set(toolResponse.id, toolBlock.id)
       } else {
         logger.warn(
@@ -50,7 +50,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
       }
     },
 
-    onToolCallComplete: (toolResponse: MCPToolResponse) => {
+    onToolCallComplete: async (toolResponse: MCPToolResponse | NormalToolResponse) => {
       const existingBlockId = toolCallIdToBlockIdMap.get(toolResponse.id)
       toolCallIdToBlockIdMap.delete(toolResponse.id)
 
@@ -82,7 +82,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
           }
         }
 
-        blockManager.smartBlockUpdate(existingBlockId, changes, MessageBlockType.TOOL, true)
+        await blockManager.smartBlockUpdate(existingBlockId, changes, MessageBlockType.TOOL, true)
 
         // Handle citation block creation for web search results
         if (toolResponse.tool.name === 'builtin_web_search' && toolResponse.response) {
@@ -96,7 +96,7 @@ export const createToolCallbacks = (deps: ToolCallbacksDependencies) => {
             }
           )
           citationBlockId = citationBlock.id
-          blockManager.handleBlockTransition(citationBlock, MessageBlockType.CITATION)
+          await blockManager.handleBlockTransition(citationBlock, MessageBlockType.CITATION)
         }
       } else {
         logger.warn(

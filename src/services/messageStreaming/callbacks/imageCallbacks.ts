@@ -27,7 +27,7 @@ export const createImageCallbacks = (deps: ImageCallbacksDependencies) => {
           status: MessageBlockStatus.PENDING
         }
         imageBlockId = blockManager.initialPlaceholderBlockId!
-        blockManager.smartBlockUpdate(imageBlockId, initialChanges, MessageBlockType.IMAGE)
+        await blockManager.smartBlockUpdate(imageBlockId, initialChanges, MessageBlockType.IMAGE)
       } else if (!imageBlockId) {
         const imageBlock = createImageBlock(assistantMsgId, {
           status: MessageBlockStatus.PENDING
@@ -37,7 +37,7 @@ export const createImageCallbacks = (deps: ImageCallbacksDependencies) => {
       }
     },
 
-    onImageDelta: (imageData: any) => {
+    onImageDelta: async (imageData: any) => {
       const imageUrl = imageData.images?.[0] || 'placeholder_image_url'
 
       if (imageBlockId) {
@@ -46,7 +46,7 @@ export const createImageCallbacks = (deps: ImageCallbacksDependencies) => {
           metadata: { generateImageResponse: imageData },
           status: MessageBlockStatus.STREAMING
         }
-        blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE, true)
+        await blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE, true)
       }
     },
     // 将生成的图片处理成file类型，加快读取速度
@@ -56,14 +56,14 @@ export const createImageCallbacks = (deps: ImageCallbacksDependencies) => {
           const changes: Partial<ImageMessageBlock> = {
             status: MessageBlockStatus.SUCCESS
           }
-          blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE)
+          await blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE)
         } else {
           const imageFile = await writeBase64File(imageData.images?.[0])
           const changes: Partial<ImageMessageBlock> = {
             file: imageFile,
             status: MessageBlockStatus.SUCCESS
           }
-          blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE, true)
+          await blockManager.smartBlockUpdate(imageBlockId, changes, MessageBlockType.IMAGE, true)
         }
 
         imageBlockId = null

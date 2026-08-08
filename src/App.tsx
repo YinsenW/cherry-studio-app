@@ -8,8 +8,8 @@ import { useDrizzleStudio } from 'expo-drizzle-studio-plugin'
 import { useFonts } from 'expo-font'
 import * as SplashScreen from 'expo-splash-screen'
 import { HeroUINativeProvider } from 'heroui-native'
-import React, { useEffect } from 'react'
-import { ActivityIndicator } from 'react-native'
+import React, { useCallback, useEffect, useState } from 'react'
+import { ActivityIndicator, Button, Text, View } from 'react-native'
 import { SystemBars } from 'react-native-edge-to-edge'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { KeyboardProvider } from 'react-native-keyboard-controller'
@@ -42,6 +42,8 @@ function DatabaseInitializer({ children }: { children: React.ReactNode }) {
   const [loaded] = useFonts({
     FiraCode: require('./assets/fonts/FiraCode-Regular.ttf')
   })
+  const [initializationState, setInitializationState] = useState<'pending' | 'ready' | 'error'>('pending')
+  const [initializationError, setInitializationError] = useState<Error | null>(null)
 
   useDrizzleStudio(expoDb)
 
@@ -57,34 +59,48 @@ function DatabaseInitializer({ children }: { children: React.ReactNode }) {
     }
   }, [success, error])
 
+  const initializeApp = useCallback(async () => {
+    setInitializationState('pending')
+    setInitializationError(null)
+
+    try {
+      await runAppDataMigrations()
+      logger.info('App data initialized successfully')
+      setInitializationState('ready')
+    } catch (e) {
+      const initializationFailure = e instanceof Error ? e : new Error(String(e))
+      logger.error('Failed to initialize app data', initializationFailure)
+      setInitializationError(initializationFailure)
+      setInitializationState('error')
+    }
+  }, [])
+
   useEffect(() => {
     if (success && loaded) {
-      const initializeApp = async () => {
-        try {
-          await runAppDataMigrations()
-          logger.info('App data initialized successfully')
-        } catch (e) {
-          logger.error('Failed to initialize app data', e as Error)
-        }
-      }
-
-      initializeApp()
+      void initializeApp()
     }
-  }, [success, loaded])
+  }, [success, loaded, initializeApp])
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync()
+    if (loaded && (error || initializationState !== 'pending')) {
+      void SplashScreen.hideAsync()
     }
-  }, [loaded])
+  }, [loaded, error, initializationState])
 
   // 如果迁移失败，显示错误界面
-  if (error) {
-    return <ActivityIndicator size="large" color="red" />
+  if (error || initializationState === 'error') {
+    return (
+      <View className="flex-1 items-center justify-center gap-4 px-6">
+        <Text className="text-center text-red-500">
+          {initializationError?.message || 'Database initialization failed. Please restart the app.'}
+        </Text>
+        {!error && <Button title="Retry" onPress={() => void initializeApp()} />}
+      </View>
+    )
   }
 
   // 如果迁移还未完成或字体未加载，显示加载指示器
-  if (!success || !loaded) {
+  if (!success || !loaded || initializationState !== 'ready') {
     return <ActivityIndicator size="large" />
   }
 

@@ -14,7 +14,7 @@ import {
   filterUserRoleStartMessages
 } from '@/utils/messageUtils/filters'
 
-import { getAssistantSettings, getDefaultModel } from './AssistantService'
+import { getAssistantModel, getAssistantSettings } from './AssistantService'
 import { loggerService } from './LoggerService'
 
 const logger = loggerService.withContext('ConversationService')
@@ -64,7 +64,7 @@ export class ConversationService {
     }
 
     return {
-      modelMessages: await convertMessagesToSdkMessages(uiMessages, assistant.model || getDefaultModel()),
+      modelMessages: await convertMessagesToSdkMessages(uiMessages, getAssistantModel(assistant)),
       uiMessages
     }
   }
