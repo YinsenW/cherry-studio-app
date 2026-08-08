@@ -9,12 +9,13 @@
  * - Client pool with composite key (baseUrl + headers hash)
  * - Tools cache with 5-minute TTL
  * - Pending connections deduplication
- * - OAuth support via MobileOAuthProvider (requires forked transport)
+ * - OAuth support via MobileOAuthProvider
  */
 
 import { RNStreamableHTTPClientTransport } from '@cherrystudio/react-native-streamable-http'
 import type { Tool } from '@modelcontextprotocol/client'
 import { Client } from '@modelcontextprotocol/client'
+import { fetch as expoFetch } from 'expo/fetch'
 import { InteractionManager } from 'react-native'
 
 import { dismissDialog, presentDialog } from '@/componentsV2/base/Dialog/useDialogManager'
@@ -23,7 +24,7 @@ import { loggerService } from '@/services/LoggerService'
 import type { ConnectivityResult, MCPCallToolResponse, MCPServer, OAuthTriggerResult } from '@/types/mcp'
 import type { MCPTool } from '@/types/tool'
 
-import { createMobileOAuthProvider, performOAuthFlow } from './oauth'
+import { createMobileAuthProvider, performOAuthFlow } from './oauth'
 
 const logger = loggerService.withContext('McpClientService')
 
@@ -55,6 +56,7 @@ function sdkToolToMcpTool(tool: Tool, server: MCPServer): MCPTool {
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema as MCPTool['inputSchema'],
+    outputSchema: tool.outputSchema as MCPTool['outputSchema'],
     isBuiltIn: false,
     type: 'mcp'
   }
@@ -258,7 +260,8 @@ class McpClientService {
   public async callTool(
     server: MCPServer,
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<MCPCallToolResponse> {
     // Check SSE type - not yet supported
     if (server.type === 'sse') {
@@ -273,10 +276,11 @@ class McpClientService {
 
       logger.info(`Calling tool ${toolName} on server ${server.name}`, { args })
 
-      const response = await client.callTool({
+      const request = {
         name: toolName,
         arguments: args
-      })
+      }
+      const response = signal ? await client.callTool(request, { signal }) : await client.callTool(request)
 
       logger.info(`Tool ${toolName} response:`, response)
 
@@ -284,6 +288,7 @@ class McpClientService {
       const contentArray = Array.isArray(response.content) ? response.content : []
       return {
         isError: response.isError === true,
+        structuredContent: response.structuredContent,
         content: contentArray.map(item => {
           if (typeof item === 'string') {
             return { type: 'text' as const, text: item }
@@ -299,10 +304,24 @@ class McpClientService {
                   data: (item as { data?: string }).data,
                   mimeType: (item as { mimeType?: string }).mimeType
                 }
+              case 'audio':
+                return {
+                  type: 'audio' as const,
+                  data: (item as { data?: string }).data,
+                  mimeType: (item as { mimeType?: string }).mimeType
+                }
               case 'resource':
                 return {
                   type: 'resource' as const,
                   resource: (item as { resource?: unknown }).resource as MCPCallToolResponse['content'][0]['resource']
+                }
+              case 'resource_link':
+                return {
+                  type: 'resource_link' as const,
+                  uri: (item as { uri?: string }).uri,
+                  name: (item as { name?: string }).name,
+                  description: (item as { description?: string }).description,
+                  mimeType: (item as { mimeType?: string }).mimeType
                 }
               default:
                 return { type: 'text' as const, text: JSON.stringify(item) }
@@ -312,6 +331,9 @@ class McpClientService {
         })
       }
     } catch (error) {
+      if (signal?.aborted) {
+        throw error
+      }
       this.maybePromptAuth(server, error)
       logger.error(`Error calling tool ${toolName} on server ${server.name}:`, error as Error)
       return {
@@ -483,10 +505,11 @@ class McpClientService {
 
     // Create OAuth provider for this server
     // The provider handles token storage and browser-based authorization
-    const authProvider = createMobileOAuthProvider(baseUrl)
+    const authProvider = createMobileAuthProvider(baseUrl)
 
     // Create transport with custom headers and OAuth support
     const transport = new RNStreamableHTTPClientTransport(baseUrl, {
+      fetch: expoFetch as typeof fetch,
       requestInit: server.headers
         ? {
             headers: server.headers
@@ -506,8 +529,12 @@ class McpClientService {
 
     transport.onclose = () => {
       logger.info(`Transport closed for ${server.name}`)
-      // Clean up client entry
-      this.clients.delete(server.id)
+      // A stale transport must not remove a newer connection created after a
+      // configuration change. Only clear the entry that owns this transport.
+      if (this.clients.get(server.id)?.transport === transport) {
+        this.clients.delete(server.id)
+        this.invalidateToolsCache(server.id)
+      }
     }
 
     // Create and connect client
@@ -517,7 +544,33 @@ class McpClientService {
         version: '0.1.5' // TODO: Get from package.json
       },
       {
-        capabilities: {}
+        capabilities: {},
+        // SDK v2 keeps legacy mode as its default for compatibility. Explicit
+        // auto negotiation is required for modern 2026-07-28 servers while
+        // retaining automatic fallback to the legacy initialize handshake.
+        versionNegotiation: { mode: 'auto' },
+        listChanged: {
+          tools: {
+            onChanged: (error, tools) => {
+              const current = this.clients.get(server.id)
+              if (current && current.client !== client) {
+                return
+              }
+              if (error || !tools) {
+                this.invalidateToolsCache(server.id)
+                if (error) {
+                  logger.warn(`MCP tool list refresh failed for ${server.name}:`, error)
+                }
+                return
+              }
+
+              this.toolsCache.set(server.id, {
+                tools: tools.map(tool => sdkToolToMcpTool(tool, server)),
+                timestamp: Date.now()
+              })
+            }
+          }
+        }
       }
     )
 
@@ -531,6 +584,10 @@ class McpClientService {
     })
 
     logger.info(`Client connected for server: ${server.name}`)
+    logger.info(`MCP protocol negotiated for ${server.name}`, {
+      era: client.getProtocolEra?.(),
+      version: client.getNegotiatedProtocolVersion?.()
+    })
     return client
   }
 
