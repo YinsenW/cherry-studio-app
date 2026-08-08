@@ -11,9 +11,11 @@ const mockPromptTexts: string[] = []
 const mockAgentConstruction = jest.fn()
 const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
+const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _modelId: string, _providerId: string) => [])
+const mockCreateMcpTools = jest.fn(async (_assistant: Assistant) => [])
 let mockAgentScenario: 'success' | 'error' = 'success'
 
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const mockMessageDatabase = {
   upsertMessages: jest.fn(async (input: Message | Message[]) => {
@@ -163,7 +165,10 @@ jest.mock('@/agent/AgentService', () => ({
     return new MockAgentService(...args)
   }
 }))
-jest.mock('@/agent/messagesToPiContext', () => ({ messagesToPiContext: jest.fn(async () => []) }))
+jest.mock('@/agent/messagesToPiContext', () => ({
+  messagesToPiContext: (messages: Message[], modelId: string, providerId: string) =>
+    mockMessagesToPiContext(messages, modelId, providerId)
+}))
 jest.mock('@/agent/oauth/oauthTools', () => ({ OAuthTool: {} }))
 jest.mock('@/agent/toolAdapter', () => ({ aiSdkToolToAgentTool: jest.fn() }))
 jest.mock('@/aiCore/tools/SystemTools', () => ({ SystemTool: {} }))
@@ -173,7 +178,15 @@ jest.mock('@/aiCore/tools/SystemTools/ComputeTools', () => ({ ComputeTool: {} })
 jest.mock('@/aiCore/tools/SystemTools/FeishuTools', () => ({ FeishuTool: {} }))
 jest.mock('@/aiCore/tools/SystemTools/GithubTools', () => ({ GithubTool: {} }))
 jest.mock('@/aiCore/tools/SystemTools/LlmTools', () => ({ createLlmTools: jest.fn(() => ({})) }))
-jest.mock('@/aiCore/tools/SystemTools/McpTools', () => ({ createMcpTools: jest.fn(async () => []) }))
+jest.mock('@/aiCore/tools/SystemTools/McpTools', () => ({
+  createMcpTools: (assistant: Assistant) => mockCreateMcpTools(assistant)
+}))
+jest.mock('@/aiCore/provider/providerConfig', () => ({
+  getActualProvider: (_model: Model, provider: { apiHost: string }) => ({
+    ...provider,
+    apiHost: provider.apiHost.endsWith('/') ? provider.apiHost : `${provider.apiHost}/v1/`
+  })
+}))
 jest.mock('@/services/ApiService', () => ({
   fetchTopicNaming: (...args: Parameters<typeof mockFetchTopicNaming>) => mockFetchTopicNaming(...args)
 }))
@@ -266,7 +279,13 @@ describe('sendAgentMessage simulated main flow', () => {
     )
 
     expect(mockPromptTexts).toEqual(['请给我一句测试回复。'])
-    expect(mockAgentConstruction).toHaveBeenCalledWith(model, expect.any(Object), [])
+    expect(mockMessagesToPiContext).toHaveBeenCalledWith([], model.id, model.provider)
+    expect(mockCreateMcpTools).not.toHaveBeenCalled()
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.objectContaining({ apiHost: 'https://mock.invalid/v1/' }),
+      []
+    )
     expect(assistantMessage).toMatchObject({
       askId: message.id,
       model,
@@ -283,6 +302,26 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(abortMap.has(message.id)).toBe(false)
   })
 
+  it('keeps the core agent response working when MCP servers are configured', async () => {
+    const { message, blocks } = makeUserMessage()
+    const assistantWithMcp: Assistant = {
+      ...assistant,
+      mcpServers: [{ id: 'mcp-1' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+
+    await sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
+
+    const assistantMessage = Array.from(mockMessages.values()).find(candidate => candidate.role === 'assistant')
+    const textBlock = Array.from(mockBlocks.values()).find(
+      block => block.type === MessageBlockType.MAIN_TEXT && block.messageId === assistantMessage?.id
+    )
+
+    expect(mockAgentConstruction).toHaveBeenCalledWith(model, expect.any(Object), [])
+    expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
+    expect(textBlock).toMatchObject({ content: '模拟响应', status: MessageBlockStatus.SUCCESS })
+    expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
+  })
+
   it('surfaces a simulated provider failure as an error block instead of leaving the conversation loading', async () => {
     mockAgentScenario = 'error'
     const { message, blocks } = makeUserMessage()
@@ -297,6 +336,12 @@ describe('sendAgentMessage simulated main flow', () => {
       messageId: assistantMessage?.id,
       error: expect.objectContaining({ message: '模拟 Provider 请求失败' })
     })
+    expect(mockSaveUpdatesToDB).toHaveBeenCalledWith(
+      assistantMessage?.id,
+      message.topicId,
+      { status: AssistantMessageStatus.ERROR },
+      []
+    )
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
     expect(abortMap.has(message.id)).toBe(false)
   })

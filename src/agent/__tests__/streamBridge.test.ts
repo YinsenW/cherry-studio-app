@@ -18,9 +18,13 @@ const mockExpoFetch = jest.fn()
 jest.mock('@cherrystudio/ai-core', () => ({
   createExecutor: (...args: unknown[]) => mockCreateExecutor(...args)
 }))
-jest.mock('@earendil-works/pi-ai', () => ({
-  createAssistantMessageEventStream: () => mockEventStream
-}), { virtual: true })
+jest.mock(
+  '@earendil-works/pi-ai',
+  () => ({
+    createAssistantMessageEventStream: () => mockEventStream
+  }),
+  { virtual: true }
+)
 jest.mock('expo/fetch', () => ({ fetch: (...args: unknown[]) => mockExpoFetch(...args) }))
 jest.mock('@/aiCore/provider/factory', () => ({
   createAiSdkProvider: async () => ({ languageModel: () => mockLanguageModel })
@@ -110,5 +114,74 @@ describe('createStreamFn simulated provider stream', () => {
         error: expect.objectContaining({ errorMessage: '模拟网络失败', stopReason: 'error' })
       })
     )
+  })
+
+  it('converts an error emitted inside fullStream into a terminal error event', async () => {
+    async function* failingFullStream() {
+      yield { type: 'error', error: new Error('模拟流错误') }
+    }
+    mockStreamText.mockResolvedValue({ fullStream: failingFullStream() })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        reason: 'error',
+        error: expect.objectContaining({ errorMessage: '模拟流错误', stopReason: 'error' })
+      })
+    )
+    expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+  })
+
+  it('recovers final text when a compatible provider omits text delta events', async () => {
+    async function* emptyFullStream() {
+      // A few OpenAI-compatible providers expose the final result only.
+    }
+    mockStreamText.mockResolvedValue({
+      fullStream: emptyFullStream(),
+      text: Promise.resolve('最终文本'),
+      toolCalls: Promise.resolve([])
+    })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'done',
+        message: expect.objectContaining({ content: [{ type: 'text', text: '最终文本' }] })
+      })
+    )
+  })
+
+  it('reports an empty provider response instead of completing with no visible message', async () => {
+    async function* emptyFullStream() {
+      // Intentionally empty.
+    }
+    mockStreamText.mockResolvedValue({
+      fullStream: emptyFullStream(),
+      text: Promise.resolve(''),
+      toolCalls: Promise.resolve([])
+    })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        reason: 'error',
+        error: expect.objectContaining({
+          errorMessage: 'The model provider returned an empty response.',
+          stopReason: 'error'
+        })
+      })
+    )
+    expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
   })
 })

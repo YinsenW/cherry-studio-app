@@ -13,6 +13,39 @@ import { piMessagesToAiSdkMessages } from './messageBridge'
 import { agentToolToAiSdkTool } from './toolAdapter'
 
 const logger = loggerService.withContext('streamBridge')
+const EMPTY_RESPONSE_ERROR_MESSAGE = 'The model provider returned an empty response.'
+type SuccessfulStopReason = Extract<AssistantMessage['stopReason'], 'stop' | 'length' | 'toolUse' | 'deferred'>
+
+function normalizeStreamError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error
+  }
+
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return new Error(String(error.message))
+  }
+
+  if (typeof error === 'string') {
+    return new Error(error)
+  }
+
+  try {
+    return new Error(JSON.stringify(error) || 'Unknown model provider error')
+  } catch {
+    return new Error(String(error))
+  }
+}
+
+function toPiStopReason(finishReason: string): SuccessfulStopReason {
+  switch (finishReason) {
+    case 'length':
+      return 'length'
+    case 'tool-calls':
+      return 'toolUse'
+    default:
+      return 'stop'
+  }
+}
 
 /**
  * 用 Cherry 的 provider 体系实现 pi-agent-core 的 streamFn。
@@ -32,6 +65,8 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
     void (async () => {
       let text = ''
       const toolCalls: ToolCall[] = []
+      let stopReason: SuccessfulStopReason = 'stop'
+      let abortedByStream = false
 
       const emptyUsage: Usage = {
         input: 0,
@@ -44,10 +79,7 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
 
       const buildPartial = (stopReason: AssistantMessage['stopReason'] = 'stop'): AssistantMessage => ({
         role: 'assistant',
-        content: [
-          ...(text ? [{ type: 'text' as const, text }] : []),
-          ...toolCalls
-        ],
+        content: [...(text ? [{ type: 'text' as const, text }] : []), ...toolCalls],
         api: provider.apiHost ?? 'custom',
         provider: provider.id,
         model: model.id,
@@ -118,15 +150,50 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
               toolCall: toolCalls[toolCalls.length - 1],
               partial: buildPartial()
             })
+          } else if (chunk.type === 'finish') {
+            if (chunk.finishReason === 'error') {
+              throw new Error('The model provider ended the stream with an error.')
+            }
+            stopReason = toPiStopReason(chunk.finishReason)
+          } else if (chunk.type === 'error') {
+            throw normalizeStreamError(chunk.error)
+          } else if (chunk.type === 'abort') {
+            abortedByStream = true
+            throw new Error('Request was aborted.')
           }
         }
 
-        const finalMessage = buildPartial()
-        stream.push({ type: 'done', reason: 'stop', message: finalMessage })
+        // Some compatible providers do not expose text deltas even though the
+        // final StreamTextResult contains text. Recover it before treating the
+        // turn as empty; message_end will create the UI text block.
+        if (!text) {
+          text = (await result.text) || ''
+        }
+
+        // Likewise, retain final tool calls if a provider omitted their
+        // intermediate fullStream event.
+        if (toolCalls.length === 0) {
+          const finalToolCalls = (await result.toolCalls) || []
+          for (const finalToolCall of finalToolCalls) {
+            toolCalls.push({
+              type: 'toolCall',
+              id: finalToolCall.toolCallId,
+              name: finalToolCall.toolName,
+              arguments: finalToolCall.input as Record<string, unknown>
+            })
+          }
+        }
+
+        if (!text.trim() && toolCalls.length === 0) {
+          throw new Error(EMPTY_RESPONSE_ERROR_MESSAGE)
+        }
+
+        const finalMessage = buildPartial(stopReason)
+        stream.push({ type: 'done', reason: stopReason, message: finalMessage })
         stream.end(finalMessage)
       } catch (error) {
         logger.error('streamBridge executor 调用失败:', error)
-        const aborted = options?.signal?.aborted === true
+        const aborted = abortedByStream || options?.signal?.aborted === true
         const errorMessage: AssistantMessage = {
           ...buildPartial(aborted ? 'aborted' : 'error'),
           // Keep cancellation recognisable by the existing streaming callbacks,

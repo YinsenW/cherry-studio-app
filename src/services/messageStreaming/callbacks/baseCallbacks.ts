@@ -5,7 +5,7 @@ import { loggerService } from '@/services/LoggerService'
 import { estimateMessagesUsage } from '@/services/TokenService'
 import type { Assistant } from '@/types/assistant'
 import type { AiSdkErrorUnion } from '@/types/error'
-import type { Message, PlaceholderMessageBlock, Response } from '@/types/message'
+import type { Message, MessageBlock, PlaceholderMessageBlock, Response } from '@/types/message'
 import { AssistantMessageStatus, MessageBlockStatus, MessageBlockType } from '@/types/message'
 import { isAbortError, serializeError } from '@/utils/error'
 import { createBaseMessageBlock, createErrorBlock } from '@/utils/messageUtils/create'
@@ -19,7 +19,12 @@ interface BaseCallbacksDependencies {
   blockManager: BlockManager
   topicId: string
   assistantMsgId: string
-  saveUpdatesToDB: any
+  saveUpdatesToDB: (
+    messageId: string,
+    topicId: string,
+    messageUpdates: Partial<Message>,
+    blocksToUpdate: MessageBlock[]
+  ) => Promise<void>
   assistant: Assistant
   startTime: number
   onNotify?: (message: string) => void
@@ -131,7 +136,7 @@ export const createBaseCallbacks = async (deps: BaseCallbacksDependencies) => {
         return
       }
 
-      await saveUpdatesToDB(assistantMsgId, topicId, errorStatus, [])
+      await saveUpdatesToDB(assistantMsgId, topicId, { status: errorStatus }, [])
       logger.error('onError', errorBlock)
     },
 

@@ -82,8 +82,8 @@ function formatProviderApiHost(provider: Provider): Provider {
  * 获取实际的Provider配置
  * 简化版：将逻辑分解为小函数
  */
-export function getActualProvider(model: Model): Provider {
-  const baseProvider = getProviderByModel(model)
+export function getActualProvider(model: Model, provider?: Provider): Provider {
+  const baseProvider = provider ?? getProviderByModel(model)
 
   // 按顺序处理各种转换
   let actualProvider = cloneDeep(baseProvider)

@@ -45,6 +45,7 @@ function makeToolResponse(
  */
 export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<void>) {
   let textStarted = false
+  let terminalError: { message: string; aborted: boolean } | null = null
   const pendingTools = new Map<string, { name: string; args: Record<string, unknown> }>()
 
   return async (event: PiAgentEvent) => {
@@ -79,6 +80,13 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
 
       case 'message_end': {
         if (event.message.role === 'assistant') {
+          if (event.message.errorMessage) {
+            terminalError = {
+              message: event.message.errorMessage,
+              aborted: event.message.stopReason === 'aborted'
+            }
+          }
+
           // 关键：TEXT_COMPLETE 必须带完整文本，否则 onTextComplete 会用空字符串
           // 覆盖 block 的 content（模拟器上验证出的根因：文本被冲掉）。
           const fullText = event.message.content
@@ -103,7 +111,9 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
       case 'tool_execution_start':
         await emit({
           type: ChunkType.MCP_TOOL_PENDING,
-          responses: [makeToolResponse(event.toolName, event.toolCallId, event.args as Record<string, unknown>, 'pending')]
+          responses: [
+            makeToolResponse(event.toolName, event.toolCallId, event.args as Record<string, unknown>, 'pending')
+          ]
         })
         pendingTools.set(event.toolCallId, { name: event.toolName, args: event.args as Record<string, unknown> })
         break
@@ -119,13 +129,7 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
         await emit({
           type: ChunkType.MCP_TOOL_COMPLETE,
           responses: [
-            makeToolResponse(
-              pendingTool?.name ?? 'tool',
-              event.toolCallId,
-              pendingTool?.args ?? {},
-              status,
-              resultText
-            )
+            makeToolResponse(pendingTool?.name ?? 'tool', event.toolCallId, pendingTool?.args ?? {}, status, resultText)
           ]
         })
         pendingTools.delete(event.toolCallId)
@@ -135,15 +139,20 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
       case 'agent_end': {
         // 如果最终 assistant 消息带 errorMessage，把错误暴露到 UI（否则无响应难排查）
         const last = event.messages?.[event.messages.length - 1]
-        if (last && 'errorMessage' in last && last.errorMessage) {
-          const wasAborted = last.stopReason === 'aborted'
+        const finalError =
+          last && 'errorMessage' in last && last.errorMessage
+            ? { message: last.errorMessage, aborted: last.stopReason === 'aborted' }
+            : terminalError
+        if (finalError) {
+          const error = new Error(finalError.aborted ? 'Request was aborted.' : finalError.message) as Error & {
+            code: string
+          }
+          error.code = 'AGENT_ERROR'
           await emit({
             type: ChunkType.ERROR,
-            error: {
-              code: 'AGENT_ERROR',
-              message: wasAborted ? 'Request was aborted.' : last.errorMessage
-            }
+            error
           })
+          terminalError = null
           break
         }
         await emit({ type: ChunkType.BLOCK_COMPLETE })

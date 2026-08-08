@@ -61,15 +61,39 @@ describe('createAgentEventToChunk', () => {
       messages: [{ errorMessage: 'provider request failed' }]
     } as never)
 
-    expect(chunks).toEqual([
-      {
-        type: 'error',
-        error: {
-          code: 'AGENT_ERROR',
-          message: 'provider request failed'
-        }
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toMatchObject({
+      type: 'error',
+      error: {
+        code: 'AGENT_ERROR',
+        message: 'provider request failed'
       }
-    ])
+    })
+    expect(chunks[0].error).toBeInstanceOf(Error)
+  })
+
+  it('retains an assistant stream error when agent_end omits the final message', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(chunk => {
+      chunks.push(chunk)
+    })
+
+    await adapter({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'stream ended with an error'
+      }
+    } as never)
+    await adapter({ type: 'agent_end', messages: [] } as never)
+
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toMatchObject({
+      type: 'error',
+      error: { code: 'AGENT_ERROR', message: 'stream ended with an error' }
+    })
   })
 
   it('renders a completed response when a provider does not emit text deltas', async () => {
@@ -97,8 +121,18 @@ describe('createAgentEventToChunk', () => {
       chunks.push(chunk)
     })
 
-    await adapter({ type: 'tool_execution_start', toolName: 'first', toolCallId: 'call-1', args: { value: 1 } } as never)
-    await adapter({ type: 'tool_execution_start', toolName: 'second', toolCallId: 'call-2', args: { value: 2 } } as never)
+    await adapter({
+      type: 'tool_execution_start',
+      toolName: 'first',
+      toolCallId: 'call-1',
+      args: { value: 1 }
+    } as never)
+    await adapter({
+      type: 'tool_execution_start',
+      toolName: 'second',
+      toolCallId: 'call-2',
+      args: { value: 2 }
+    } as never)
     await adapter({
       type: 'tool_execution_end',
       toolCallId: 'call-2',

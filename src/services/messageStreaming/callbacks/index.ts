@@ -1,4 +1,5 @@
 import type { Assistant } from '@/types/assistant'
+import type { Message, MessageBlock } from '@/types/message'
 
 import type { BlockManager } from '../BlockManager'
 import { createBaseCallbacks } from './baseCallbacks'
@@ -12,7 +13,12 @@ interface CallbacksDependencies {
   blockManager: BlockManager
   topicId: string
   assistantMsgId: string
-  saveUpdatesToDB: any
+  saveUpdatesToDB: (
+    messageId: string,
+    topicId: string,
+    messageUpdates: Partial<Message>,
+    blocksToUpdate: MessageBlock[]
+  ) => Promise<void>
   assistant: Assistant
   startTime: number
   onNotify?: (message: string) => void

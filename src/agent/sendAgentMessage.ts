@@ -1,6 +1,8 @@
 import { messageDatabase } from '@database'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
 
 import { OAuthTool } from '@/agent/oauth/oauthTools'
+import { getActualProvider } from '@/aiCore/provider/providerConfig'
 import { SystemTool } from '@/aiCore/tools/SystemTools'
 import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
 import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
@@ -8,7 +10,6 @@ import { ComputeTool } from '@/aiCore/tools/SystemTools/ComputeTools'
 import { FeishuTool } from '@/aiCore/tools/SystemTools/FeishuTools'
 import { GithubTool } from '@/aiCore/tools/SystemTools/GithubTools'
 import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
-import { createMcpTools } from '@/aiCore/tools/SystemTools/McpTools'
 import { fetchTopicNaming } from '@/services/ApiService'
 import { getAssistantModel } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
@@ -59,6 +60,25 @@ function resolveAgentAssistant(assistant: Assistant): Assistant {
 }
 
 /**
+ * Keep the core LLM path independent from the optional MCP runtime. In
+ * particular, loading optional MCP integration must not prevent an assistant
+ * with no MCP servers from replying.
+ */
+async function loadMcpAgentTools(assistant: Assistant): Promise<AgentTool[]> {
+  if (!assistant.mcpServers?.length) {
+    return []
+  }
+
+  try {
+    const { createMcpTools } = await import('@/aiCore/tools/SystemTools/McpTools')
+    return await createMcpTools(assistant)
+  } catch (error) {
+    logger.warn('Agent will continue without MCP tools because MCP initialization failed:', error as Error)
+    return []
+  }
+}
+
+/**
  * 执行一次 agent 会话，把 pi 事件流转换为现有块流并落库。
  *
  * 被 sendAgentMessage（新消息）和 regenerateAgentMessage（重新生成）共用。
@@ -102,17 +122,19 @@ export async function runAgentSession(
     streamProcessor = createStreamProcessor(callbacks)
     const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) => streamProcessor!(chunk)
 
-    // 2. 读取历史并转换为 pi 上下文（排除本次 assistant 消息）
+    // 2. 读取历史并转换为 pi 上下文。本次用户消息会由 prompt()
+    // 注入，所以和 assistant 占位消息一起排除，避免同一条问题发送两次。
     const allMessages = await messageDatabase.getMessagesByTopicId(topicId)
     const contextMessages = await messagesToPiContext(
-      allMessages.filter(m => m.id !== assistantMessage.id),
+      allMessages.filter(m => m.id !== assistantMessage.id && m.id !== userMessage.id),
       resolvedAssistant.model!.id,
       resolvedAssistant.model!.provider
     )
 
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
-    const provider = await getAssistantProvider(resolvedAssistant)
-    const mcpTools = await createMcpTools(resolvedAssistant)
+    const configuredProvider = await getAssistantProvider(resolvedAssistant)
+    const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
+    const mcpTools = await loadMcpAgentTools(resolvedAssistant)
     const tools = [
       ...Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
@@ -124,7 +146,13 @@ export async function runAgentSession(
       ...Object.entries(createLlmTools(resolvedAssistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
       ...mcpTools
     ]
-    const agentService = new AgentService(resolvedAssistant.model!, provider, tools, undefined, contextMessages as never[])
+    const agentService = new AgentService(
+      resolvedAssistant.model!,
+      provider,
+      tools,
+      resolvedAssistant.prompt || undefined,
+      contextMessages as never[]
+    )
 
     // 4. 事件 → chunk → 现有块流
     unsubscribeAgentEvents = agentService.subscribe(createAgentEventToChunk(processChunk))
@@ -161,12 +189,10 @@ export async function runAgentSession(
   } catch (error) {
     logger.error('Error in agent session:', error as Error)
     // 让错误在聊天 UI 可见（不再静默无响应）
+    const sessionError = error instanceof Error ? error : new Error(String(error))
     await streamProcessor?.({
       type: ChunkType.ERROR,
-      error: {
-        code: 'AGENT_ERROR',
-        message: error instanceof Error ? error.message : String(error)
-      }
+      error: sessionError
     })
     await streamProcessor?.drain()
   } finally {
