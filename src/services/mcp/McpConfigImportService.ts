@@ -1,5 +1,5 @@
 import type { MCPServer, McpServerConfig } from '@/types/mcp'
-import { safeValidateMcpServerConfig } from '@/types/mcp'
+import { normalizeMcpServerType, safeValidateMcpServerConfig } from '@/types/mcp'
 import { uuid } from '@/utils'
 
 export type McpJsonImportErrorCode =
@@ -83,6 +83,9 @@ function normalizeConfigShape(config: unknown): unknown {
 
   if (normalized.type === undefined && typeof normalized.transport === 'string') {
     normalized.type = normalized.transport
+  }
+  if (typeof normalized.type === 'string') {
+    normalized.type = normalizeMcpServerType(normalized.type)
   }
   delete normalized.transport
 

@@ -16,6 +16,17 @@ import {
   performOAuthFlow
 } from '../MobileOAuthProvider'
 
+jest.mock(
+  'pkce-challenge',
+  () => ({
+    __esModule: true,
+    default: jest.fn(async () => ({ code_verifier: 'test-verifier', code_challenge: 'test-challenge' })),
+    generateChallenge: jest.fn(),
+    verifyChallenge: jest.fn()
+  }),
+  { virtual: true }
+)
+
 // Access global mock storage from jest.setup.js
 declare global {
   var __mockStorageData: Map<string, string>
@@ -32,6 +43,10 @@ jest.mock('expo-crypto', () => ({
 
 jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn()
+}))
+
+jest.mock('expo/fetch', () => ({
+  fetch: (...args: Parameters<typeof global.fetch>) => global.fetch(...args)
 }))
 
 // Helper to reset storage
@@ -443,7 +458,7 @@ describe('performOAuthFlow', () => {
       })
     })
 
-    await expect(performOAuthFlow('https://example.com/mcp')).rejects.toThrow('Invalid OAuth metadata')
+    await expect(performOAuthFlow('https://example.com/mcp')).rejects.toThrow()
   })
 
   it('should throw error when server does not support registration', async () => {
@@ -451,35 +466,50 @@ describe('performOAuthFlow', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        issuer: 'https://auth.example.com',
+        issuer: 'https://example.com/',
         authorization_endpoint: 'https://auth.example.com/authorize',
-        token_endpoint: 'https://auth.example.com/token'
+        token_endpoint: 'https://auth.example.com/token',
+        response_types_supported: ['code']
         // No registration_endpoint
       })
     })
 
-    await expect(performOAuthFlow('https://example.com/mcp')).rejects.toThrow(
-      'OAuth server does not support dynamic client registration'
-    )
+    await expect(performOAuthFlow('https://example.com/mcp')).rejects.toThrow(/registration/i)
   })
 
   it('should return false when user cancels OAuth', async () => {
     const mockFetch = global.fetch as jest.Mock
     mockFetch
       .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => ''
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => ''
+      })
+      .mockResolvedValueOnce({
         ok: true,
+        status: 200,
         json: async () => ({
-          issuer: 'https://auth.example.com',
+          issuer: 'https://example.com/',
           authorization_endpoint: 'https://auth.example.com/authorize',
           token_endpoint: 'https://auth.example.com/token',
-          registration_endpoint: 'https://auth.example.com/register'
+          registration_endpoint: 'https://auth.example.com/register',
+          response_types_supported: ['code'],
+          code_challenge_methods_supported: ['S256']
         })
       })
       .mockResolvedValueOnce({
         ok: true,
+        status: 200,
         json: async () => ({
           client_id: 'client-id',
-          client_secret: 'secret'
+          client_secret: 'secret',
+          redirect_uris: ['cherry-studio://oauth/callback'],
+          token_endpoint_auth_method: 'none'
         })
       })
 
@@ -489,5 +519,62 @@ describe('performOAuthFlow', () => {
     const result = await performOAuthFlow('https://example.com/mcp')
 
     expect(result).toBe(false)
+  })
+
+  it('should complete the official SDK discovery, PKCE, registration, and token exchange flow', async () => {
+    const mockFetch = global.fetch as jest.Mock
+    mockFetch.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input)
+      if (url.includes('oauth-protected-resource')) {
+        return { ok: false, status: 404, text: async () => '' }
+      }
+      if (url.includes('oauth-authorization-server')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            issuer: 'https://example.com/',
+            authorization_endpoint: 'https://auth.example.com/authorize',
+            token_endpoint: 'https://auth.example.com/token',
+            registration_endpoint: 'https://auth.example.com/register',
+            response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256']
+          })
+        }
+      }
+      if (url.endsWith('/register')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            client_id: 'client-id',
+            redirect_uris: ['cherry-studio://oauth/callback'],
+            token_endpoint_auth_method: 'none'
+          })
+        }
+      }
+      if (url.endsWith('/token')) {
+        expect(init?.method).toBe('POST')
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ access_token: 'sdk-token', token_type: 'Bearer' })
+        }
+      }
+      throw new Error(`Unexpected OAuth request: ${url}`)
+    })
+
+    const mockOpenAuth = WebBrowser.openAuthSessionAsync as jest.Mock
+    mockOpenAuth.mockImplementation(async (authorizationUrl: string) => {
+      const state = new URL(authorizationUrl).searchParams.get('state')
+      return {
+        type: 'success',
+        url: `cherry-studio://oauth/callback?code=sdk-code&state=${encodeURIComponent(state || '')}`
+      }
+    })
+
+    await expect(performOAuthFlow('https://example.com/mcp')).resolves.toBe(true)
+    expect(hasOAuthTokens('https://example.com/mcp')).toBe(true)
+    expect(createMobileOAuthProvider('https://example.com/mcp').tokens()?.access_token).toBe('sdk-token')
   })
 })

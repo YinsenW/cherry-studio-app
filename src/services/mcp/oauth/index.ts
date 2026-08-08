@@ -3,6 +3,7 @@
  */
 export {
   clearOAuthTokens,
+  createMobileAuthProvider,
   createMobileOAuthProvider,
   hasOAuthTokens,
   MobileOAuthProvider,

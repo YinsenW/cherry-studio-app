@@ -51,9 +51,12 @@ describe('createMcpTools', () => {
     await expect(tool.execute('call-1', { query: 'Cherry' }, new AbortController().signal, jest.fn())).resolves.toEqual(
       expect.objectContaining({ content: [{ type: 'text', text: 'result' }] })
     )
-    expect(mockCallTool).toHaveBeenCalledWith(expect.objectContaining({ id: 'server:remote' }), 'search.web/v2', {
-      query: 'Cherry'
-    })
+    expect(mockCallTool).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'server:remote' }),
+      'search.web/v2',
+      { query: 'Cherry' },
+      expect.any(AbortSignal)
+    )
   })
 
   it('propagates remote MCP tool failures into the agent loop', async () => {

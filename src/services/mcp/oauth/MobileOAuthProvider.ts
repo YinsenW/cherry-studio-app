@@ -4,217 +4,28 @@
  * Implements the OAuthClientProvider interface from @modelcontextprotocol/client
  * for mobile OAuth authentication using expo-web-browser and MMKV storage.
  *
- * This provider is designed to work with the forked @cherrystudio/react-native-streamable-http
- * transport that supports the authProvider option.
+ * This provider is used by the official MCP v2 transport auth seam. The mobile
+ * adapter keeps the SDK's OAuth state and tokens in MMKV while completing the
+ * browser callback through expo-web-browser.
  */
 import type {
+  AuthProvider,
+  FetchLike,
+  OAuthClientInformationContext,
   OAuthClientInformationFull,
   OAuthClientMetadata,
   OAuthClientProvider,
+  OAuthDiscoveryState,
   OAuthTokens
 } from '@modelcontextprotocol/client'
-import * as Crypto from 'expo-crypto'
+import { auth, extractWWWAuthenticateParams } from '@modelcontextprotocol/client'
+import { fetch as expoFetch } from 'expo/fetch'
 import * as WebBrowser from 'expo-web-browser'
-import { z } from 'zod'
 
 import { loggerService } from '@/services/LoggerService'
 import { storage, uuid } from '@/utils'
 
 const logger = loggerService.withContext('MCP:OAuth')
-
-// ==================== OAuth Types ====================
-
-const OAuthMetadataSchema = z.object({
-  issuer: z.string().url(),
-  authorization_endpoint: z.string().url(),
-  token_endpoint: z.string().url(),
-  registration_endpoint: z.string().url().optional(),
-  scopes_supported: z.array(z.string()).optional(),
-  response_types_supported: z.array(z.string()).optional(),
-  code_challenge_methods_supported: z.array(z.string()).optional()
-})
-
-type OAuthMetadata = z.infer<typeof OAuthMetadataSchema>
-
-const OAuthClientInfoSchema = z.object({
-  client_id: z.string().min(1),
-  client_secret: z.string().optional(),
-  client_id_issued_at: z.number().optional(),
-  client_secret_expires_at: z.number().optional()
-})
-
-const OAuthTokensSchema = z.object({
-  access_token: z.string().min(1),
-  token_type: z.string().optional(),
-  expires_in: z.number().optional(),
-  refresh_token: z.string().optional(),
-  scope: z.string().optional()
-})
-
-// ==================== PKCE Helper Functions ====================
-
-/**
- * Generate a cryptographically secure code verifier for PKCE
- */
-function generateCodeVerifier(): string {
-  const array = Crypto.getRandomBytes(32)
-  return base64UrlEncode(array)
-}
-
-/**
- * Generate code challenge from verifier using SHA-256
- */
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(verifier)
-  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, data)
-  return base64UrlEncode(new Uint8Array(digest))
-}
-
-/**
- * Base64 URL encode (no padding, URL-safe characters)
- */
-function base64UrlEncode(buffer: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < buffer.length; i++) {
-    binary += String.fromCharCode(buffer[i])
-  }
-  const base64 = btoa(binary)
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-// ==================== OAuth Discovery & Registration ====================
-
-/**
- * Discover OAuth metadata from server
- */
-async function discoverOAuthMetadata(serverUrl: string): Promise<OAuthMetadata> {
-  const url = new URL(serverUrl)
-  const metadataUrl = `${url.origin}/.well-known/oauth-authorization-server`
-
-  logger.info(`Discovering OAuth metadata from: ${metadataUrl}`)
-
-  const response = await fetch(metadataUrl)
-  if (!response.ok) {
-    throw new Error(`Failed to discover OAuth metadata: ${response.status}`)
-  }
-
-  const rawMetadata = await response.json()
-  const parseResult = OAuthMetadataSchema.safeParse(rawMetadata)
-
-  if (!parseResult.success) {
-    const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
-    logger.error(`Invalid OAuth metadata from server: ${errors}`)
-    throw new Error(`Invalid OAuth metadata: ${errors}`)
-  }
-
-  logger.info('OAuth metadata discovered and validated successfully')
-  return parseResult.data
-}
-
-/**
- * Register OAuth client dynamically
- */
-async function registerOAuthClient(
-  registrationEndpoint: string,
-  clientMetadata: OAuthClientMetadata
-): Promise<OAuthClientInformationFull> {
-  logger.info('Registering OAuth client dynamically')
-
-  const response = await fetch(registrationEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(clientMetadata)
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to register OAuth client: ${response.status}`)
-  }
-
-  const rawClientInfo = await response.json()
-  const parseResult = OAuthClientInfoSchema.safeParse(rawClientInfo)
-
-  if (!parseResult.success) {
-    const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
-    logger.error(`Invalid client registration response: ${errors}`)
-    throw new Error(`Invalid client registration response: ${errors}`)
-  }
-
-  logger.info('OAuth client registered successfully')
-  return rawClientInfo as OAuthClientInformationFull
-}
-
-/**
- * Build authorization URL with PKCE parameters
- */
-function buildAuthorizationUrl(
-  metadata: OAuthMetadata,
-  clientId: string,
-  redirectUri: string,
-  codeChallenge: string,
-  state: string
-): string {
-  const url = new URL(metadata.authorization_endpoint)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('client_id', clientId)
-  url.searchParams.set('redirect_uri', redirectUri)
-  url.searchParams.set('code_challenge', codeChallenge)
-  url.searchParams.set('code_challenge_method', 'S256')
-  url.searchParams.set('state', state)
-
-  if (metadata.scopes_supported?.length) {
-    url.searchParams.set('scope', metadata.scopes_supported.join(' '))
-  }
-
-  return url.toString()
-}
-
-/**
- * Exchange authorization code for tokens
- */
-async function exchangeCodeForTokens(
-  tokenEndpoint: string,
-  code: string,
-  clientId: string,
-  codeVerifier: string,
-  redirectUri: string
-): Promise<OAuthTokens> {
-  logger.info('Exchanging authorization code for tokens')
-
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      client_id: clientId,
-      code_verifier: codeVerifier
-    }).toString()
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    logger.error(`Token exchange failed: ${response.status} - ${errorText}`)
-    throw new Error(`Token exchange failed: ${response.status}`)
-  }
-
-  const rawTokens = await response.json()
-  const parseResult = OAuthTokensSchema.safeParse(rawTokens)
-
-  if (!parseResult.success) {
-    const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
-    logger.error(`Invalid token response: ${errors}`)
-    throw new Error(`Invalid token response: ${errors}`)
-  }
-
-  logger.info('Token exchange successful')
-  return rawTokens as OAuthTokens
-}
 
 const STORAGE_PREFIX = 'mcp_oauth_'
 const REDIRECT_URL = 'cherry-studio://oauth/callback'
@@ -256,6 +67,22 @@ export class MobileOAuthProvider implements OAuthClientProvider {
     return `${STORAGE_PREFIX}${this.serverHash}_state`
   }
 
+  private get discoveryKey(): string {
+    return `${STORAGE_PREFIX}${this.serverHash}_discovery`
+  }
+
+  private get resourceKey(): string {
+    return `${STORAGE_PREFIX}${this.serverHash}_resource`
+  }
+
+  private get authorizationServerKey(): string {
+    return `${STORAGE_PREFIX}${this.serverHash}_authorization_server`
+  }
+
+  private get callbackKey(): string {
+    return `${STORAGE_PREFIX}${this.serverHash}_callback`
+  }
+
   // ==================== OAuthClientProvider Interface ====================
 
   /**
@@ -281,7 +108,7 @@ export class MobileOAuthProvider implements OAuthClientProvider {
   /**
    * Load client information from storage
    */
-  clientInformation(): OAuthClientInformationFull | undefined {
+  clientInformation(_ctx?: OAuthClientInformationContext): OAuthClientInformationFull | undefined {
     const data = storage.getString(this.clientInfoKey)
     if (!data) return undefined
 
@@ -297,7 +124,7 @@ export class MobileOAuthProvider implements OAuthClientProvider {
   /**
    * Save client information to storage
    */
-  saveClientInformation(info: OAuthClientInformationFull): void {
+  saveClientInformation(info: OAuthClientInformationFull, _ctx?: OAuthClientInformationContext): void {
     storage.set(this.clientInfoKey, JSON.stringify(info))
     logger.verbose('Saved client information')
   }
@@ -305,7 +132,7 @@ export class MobileOAuthProvider implements OAuthClientProvider {
   /**
    * Load OAuth tokens from storage
    */
-  tokens(): OAuthTokens | undefined {
+  tokens(_ctx?: OAuthClientInformationContext): OAuthTokens | undefined {
     const data = storage.getString(this.tokensKey)
     if (!data) return undefined
 
@@ -321,7 +148,7 @@ export class MobileOAuthProvider implements OAuthClientProvider {
   /**
    * Save OAuth tokens to storage
    */
-  saveTokens(tokens: OAuthTokens): void {
+  saveTokens(tokens: OAuthTokens, _ctx?: OAuthClientInformationContext): void {
     storage.set(this.tokensKey, JSON.stringify(tokens))
     logger.info('Saved OAuth tokens')
   }
@@ -365,13 +192,43 @@ export class MobileOAuthProvider implements OAuthClientProvider {
       throw new Error('No authorization code received from OAuth provider')
     }
 
+    storage.set(
+      this.callbackKey,
+      JSON.stringify({
+        code,
+        iss: callbackUrl.searchParams.get('iss') || undefined
+      })
+    )
     logger.info('Received authorization code from OAuth provider')
+  }
 
-    // Note: The SDK's auth() function will extract the code from the redirect URL
-    // and call exchangeAuthorization() to get the tokens.
-    // We need to store the callback URL so the SDK can access it.
-    // The SDK expects redirectToAuthorization to return after the user completes auth.
-    // The code will be extracted from the URL by the SDK.
+  /**
+   * Read and clear the callback captured by redirectToAuthorization.
+   *
+   * The MCP SDK's browser-oriented auth() API returns `REDIRECT` after calling
+   * redirectToAuthorization(). React Native's auth session already waits for
+   * the deep-link callback, so the mobile adapter consumes the callback and
+   * invokes auth() a second time with the authorization code.
+   */
+  consumeAuthorizationCallback(): { code: string; iss?: string } | undefined {
+    const data = storage.getString(this.callbackKey)
+    if (!data) return undefined
+
+    storage.delete(this.callbackKey)
+    storage.delete(this.stateKey)
+    try {
+      const callback = JSON.parse(data) as { code?: unknown; iss?: unknown }
+      if (typeof callback.code !== 'string' || callback.code.length === 0) {
+        return undefined
+      }
+      return {
+        code: callback.code,
+        iss: typeof callback.iss === 'string' && callback.iss.length > 0 ? callback.iss : undefined
+      }
+    } catch (error) {
+      logger.error('Corrupted OAuth callback in storage, clearing', error as Error)
+      return undefined
+    }
   }
 
   /**
@@ -436,6 +293,10 @@ export class MobileOAuthProvider implements OAuthClientProvider {
         storage.delete(this.clientInfoKey)
         storage.delete(this.verifierKey)
         storage.delete(this.stateKey)
+        storage.delete(this.discoveryKey)
+        storage.delete(this.resourceKey)
+        storage.delete(this.authorizationServerKey)
+        storage.delete(this.callbackKey)
         logger.info('Invalidated all OAuth credentials')
         break
       case 'tokens':
@@ -451,13 +312,48 @@ export class MobileOAuthProvider implements OAuthClientProvider {
         logger.info('Invalidated PKCE code verifier')
         break
       case 'discovery':
-        // Discovery state cache is not persisted yet; this scope is a no-op for now.
+        storage.delete(this.discoveryKey)
+        storage.delete(this.resourceKey)
+        storage.delete(this.authorizationServerKey)
         logger.info('Invalidated OAuth discovery state')
         break
       case 'state':
         storage.delete(this.stateKey)
         logger.info('Invalidated OAuth state')
         break
+    }
+  }
+
+  saveAuthorizationServerUrl(authorizationServerUrl: string): void {
+    storage.set(this.authorizationServerKey, authorizationServerUrl)
+  }
+
+  authorizationServerUrl(): string | undefined {
+    return storage.getString(this.authorizationServerKey)
+  }
+
+  saveResourceUrl(resourceUrl: string): void {
+    storage.set(this.resourceKey, resourceUrl)
+  }
+
+  resourceUrl(): string | undefined {
+    return storage.getString(this.resourceKey)
+  }
+
+  saveDiscoveryState(state: OAuthDiscoveryState): void {
+    storage.set(this.discoveryKey, JSON.stringify(state))
+  }
+
+  discoveryState(): OAuthDiscoveryState | undefined {
+    const data = storage.getString(this.discoveryKey)
+    if (!data) return undefined
+
+    try {
+      return JSON.parse(data) as OAuthDiscoveryState
+    } catch (error) {
+      logger.error('Corrupted OAuth discovery state in storage, clearing', error as Error)
+      storage.delete(this.discoveryKey)
+      return undefined
     }
   }
 }
@@ -472,6 +368,30 @@ export function createMobileOAuthProvider(serverUrl: string): MobileOAuthProvide
   // Create a hash of the server URL for storage keys
   const hash = simpleHash(serverUrl)
   return new MobileOAuthProvider(hash)
+}
+
+/**
+ * Adapt the mobile OAuth store to the official MCP v2 transport auth seam.
+ * Streamable HTTP needs a current bearer token and a one-shot unauthorized
+ * callback so it can retry the failed request after reauthorization.
+ */
+export function createMobileAuthProvider(serverUrl: string): AuthProvider {
+  const oauthProvider = createMobileOAuthProvider(serverUrl)
+
+  return {
+    token: async () => oauthProvider.tokens()?.access_token,
+    onUnauthorized: async context => {
+      const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(context.response)
+      const authorized = await runSdkOAuthFlow(oauthProvider, serverUrl, {
+        fetchFn: context.fetchFn,
+        resourceMetadataUrl,
+        scope
+      })
+      if (!authorized) {
+        throw new Error('OAuth authorization was cancelled or failed')
+      }
+    }
+  }
 }
 
 /**
@@ -519,94 +439,76 @@ export function clearOAuthTokens(serverUrl: string): void {
   logger.info('Cleared OAuth tokens for server')
 }
 
+interface SdkOAuthFlowOptions {
+  fetchFn?: FetchLike
+  resourceMetadataUrl?: URL
+  scope?: string
+}
+
 /**
- * Perform the complete OAuth flow for an MCP server
+ * Run the MCP SDK OAuth orchestrator in a React Native auth session.
  *
- * This function handles:
- * 1. OAuth metadata discovery
- * 2. Dynamic client registration (if needed)
- * 3. PKCE code generation
- * 4. Opening browser for authorization
- * 5. Exchanging authorization code for tokens
- * 6. Saving tokens to storage
+ * The SDK's interactive branch returns `REDIRECT` after invoking the provider's
+ * redirect callback. On mobile, that callback has already completed by the time
+ * openAuthSessionAsync resolves, so we immediately run the SDK's callback leg to
+ * exchange the code and persist issuer-bound tokens.
+ */
+async function runSdkOAuthFlow(
+  provider: MobileOAuthProvider,
+  serverUrl: string,
+  options: SdkOAuthFlowOptions = {}
+): Promise<boolean> {
+  const authOptions = {
+    serverUrl,
+    fetchFn: options.fetchFn,
+    resourceMetadataUrl: options.resourceMetadataUrl,
+    scope: options.scope
+  }
+
+  const result = await auth(provider, authOptions)
+  if (result === 'AUTHORIZED') return true
+
+  const callback = provider.consumeAuthorizationCallback()
+  if (!callback) {
+    logger.warn('MCP OAuth redirect completed without an authorization callback')
+    return false
+  }
+
+  const completion = await auth(provider, {
+    ...authOptions,
+    authorizationCode: callback.code,
+    iss: callback.iss
+  })
+  return completion === 'AUTHORIZED'
+}
+
+function isOAuthCancellation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /cancelled|canceled|user.?denied/i.test(message)
+}
+
+/**
+ * Perform the complete MCP OAuth flow for an MCP server.
  *
- * @param serverUrl - The MCP server URL to authenticate with
- * @returns true if OAuth was successful, false otherwise
+ * Discovery, RFC 9728 resource binding, RFC 8414/OIDC metadata validation,
+ * PKCE, dynamic registration, issuer checks, refresh, and token exchange are
+ * delegated to the official MCP SDK. This keeps mobile behavior aligned with
+ * the current MCP OAuth protocol instead of maintaining a second parser.
  */
 export async function performOAuthFlow(serverUrl: string): Promise<boolean> {
   const provider = createMobileOAuthProvider(serverUrl)
 
   try {
-    // 1. Discover OAuth metadata
-    logger.info(`Starting OAuth flow for: ${serverUrl}`)
-    const metadata = await discoverOAuthMetadata(serverUrl)
-
-    // 2. Get or register client
-    let clientInfo = provider.clientInformation()
-    if (!clientInfo) {
-      if (!metadata.registration_endpoint) {
-        throw new Error('OAuth server does not support dynamic client registration')
-      }
-      clientInfo = await registerOAuthClient(metadata.registration_endpoint, provider.clientMetadata)
-      provider.saveClientInformation(clientInfo)
-    }
-
-    // 3. Generate PKCE
-    const codeVerifier = generateCodeVerifier()
-    const codeChallenge = await generateCodeChallenge(codeVerifier)
-    provider.saveCodeVerifier(codeVerifier)
-
-    // 4. Build authorization URL
-    const state = provider.state()
-    const authUrl = buildAuthorizationUrl(metadata, clientInfo.client_id, provider.redirectUrl, codeChallenge, state)
-
-    // 5. Open browser and wait for callback
-    logger.info('Opening browser for OAuth authorization')
-    const result = await WebBrowser.openAuthSessionAsync(authUrl, provider.redirectUrl)
-
-    if (result.type !== 'success') {
-      logger.warn(`OAuth flow ended with type: ${result.type}`)
+    logger.info(`Starting MCP OAuth flow for: ${serverUrl}`)
+    return await runSdkOAuthFlow(provider, serverUrl, {
+      fetchFn: expoFetch as unknown as FetchLike
+    })
+  } catch (error) {
+    if (isOAuthCancellation(error)) {
+      logger.warn(`MCP OAuth flow cancelled for ${serverUrl}`)
       return false
     }
-
-    // 6. Extract authorization code from callback URL
-    const callbackUrl = new URL(result.url)
-    const code = callbackUrl.searchParams.get('code')
-    const error = callbackUrl.searchParams.get('error')
-    const returnedState = callbackUrl.searchParams.get('state')
-
-    // Verify state parameter for CSRF protection
-    if (!returnedState || !provider.verifyState(returnedState)) {
-      throw new Error('OAuth state mismatch - possible CSRF attack')
-    }
-
-    if (error) {
-      const errorDescription = callbackUrl.searchParams.get('error_description') || error
-      logger.error(`OAuth error: ${errorDescription}`)
-      throw new Error(`OAuth authorization failed: ${errorDescription}`)
-    }
-
-    if (!code) {
-      logger.error('No authorization code in callback URL')
-      throw new Error('No authorization code received from OAuth provider')
-    }
-
-    // 7. Exchange code for tokens
-    const tokens = await exchangeCodeForTokens(
-      metadata.token_endpoint,
-      code,
-      clientInfo.client_id,
-      codeVerifier,
-      provider.redirectUrl
-    )
-
-    // 8. Save tokens
-    provider.saveTokens(tokens)
-    logger.info('OAuth flow completed successfully')
-
-    return true
-  } catch (error) {
-    logger.error('OAuth flow failed:', error as Error)
+    logger.error('MCP OAuth flow failed:', error as Error)
     throw error
   }
 }
