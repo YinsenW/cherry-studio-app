@@ -194,11 +194,22 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
       } catch (error) {
         logger.error('streamBridge executor 调用失败:', error)
         const aborted = abortedByStream || options?.signal?.aborted === true
+        // AI_APICallError 的 `message` 字段经常是空串（真实错误在 statusCode /
+        // responseBody 里）。若 errorMessage 为空，agentToChunk 会把失败回合
+        // 当成静默成功——正是"发消息没反应"的根因。从可用的字段里拼一个可读消息。
+        const errorMessageText = (() => {
+          if (aborted) return 'Request was aborted.'
+          const anyErr = error as Error & { statusCode?: number; responseBody?: string }
+          if (typeof anyErr.responseBody === 'string' && anyErr.responseBody) return anyErr.responseBody
+          if (typeof anyErr.statusCode === 'number') return `HTTP ${anyErr.statusCode}`
+          if (error instanceof Error && error.message) return error.message
+          return error ? String(error) : 'Unknown LLM error'
+        })()
         const errorMessage: AssistantMessage = {
           ...buildPartial(aborted ? 'aborted' : 'error'),
           // Keep cancellation recognisable by the existing streaming callbacks,
           // which render it as a paused message instead of a failed message.
-          errorMessage: aborted ? 'Request was aborted.' : error instanceof Error ? error.message : String(error)
+          errorMessage: errorMessageText
         }
         stream.push({ type: 'error', reason: aborted ? 'aborted' : 'error', error: errorMessage })
         stream.end(errorMessage)
