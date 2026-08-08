@@ -10,7 +10,22 @@
       "selectModel": "选择模型",
       "send": "发送",
       "stop": "停止",
-      "title": "智能体"
+      "title": "智能体",
+      "workspace": {
+        "androidDescription": "Android 文件夹访问",
+        "androidFolder": "Android 文件夹",
+        "approvalContent": "智能体请求在当前移动工作区执行{{operation}}{{path}}。",
+        "approvalTitle": "允许智能体修改工作区？",
+        "defaultName": "手机工作区",
+        "destructiveOperation": "删除或移动操作",
+        "fileChange": "文件修改",
+        "iosDescription": "仅在本次应用会话可用",
+        "iosFolder": "iOS 文件夹",
+        "pickFolder": "选择设备文件夹…",
+        "pickFolderDescription": "使用系统文件选择器打开文件夹",
+        "privateDescription": "应用私有数据目录",
+        "title": "智能体工作区"
+      }
     },
     "assistants": {
       "market": {

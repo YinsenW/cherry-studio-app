@@ -1,3 +1,4 @@
+export * from './AgentWorkspaceDatabase'
 export * from './AssistantDatabase'
 export * from './DatabaseMaintenance'
 export * from './FileDatabase'

@@ -10,7 +10,22 @@
       "selectModel": "Select Model",
       "send": "Send",
       "stop": "Stop",
-      "title": "Agent"
+      "title": "Agent",
+      "workspace": {
+        "androidDescription": "Доступ к папке Android",
+        "androidFolder": "Папка Android",
+        "approvalContent": "Агент запрашивает {{operation}}{{path}} в мобильной рабочей области.",
+        "approvalTitle": "Разрешить агенту изменить рабочую область?",
+        "defaultName": "Мобильная рабочая область",
+        "destructiveOperation": "опасную операцию",
+        "fileChange": "изменение файла",
+        "iosDescription": "Доступна только в этой сессии",
+        "iosFolder": "Папка iOS",
+        "pickFolder": "Выбрать папку устройства…",
+        "pickFolderDescription": "Открыть системный выбор файлов",
+        "privateDescription": "Приватное хранилище приложения",
+        "title": "Рабочая область агента"
+      }
     },
     "assistants": {
       "market": {

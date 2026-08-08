@@ -10,7 +10,22 @@
       "selectModel": "Select Model",
       "send": "Send",
       "stop": "Stop",
-      "title": "Agent"
+      "title": "Agent",
+      "workspace": {
+        "androidDescription": "Android folder access",
+        "androidFolder": "Android folder",
+        "approvalContent": "The agent requested a {{operation}}{{path}} in the active mobile workspace.",
+        "approvalTitle": "Allow agent workspace change?",
+        "defaultName": "Mobile workspace",
+        "destructiveOperation": "destructive operation",
+        "fileChange": "file change",
+        "iosDescription": "Available for this app session",
+        "iosFolder": "iOS folder",
+        "pickFolder": "Choose a device folder…",
+        "pickFolderDescription": "Use a folder from the system file picker",
+        "privateDescription": "Private app storage",
+        "title": "Agent workspace"
+      }
     },
     "assistants": {
       "market": {

@@ -1,0 +1,663 @@
+import { Directory, File, Paths } from 'expo-file-system'
+
+import { loggerService } from '@/services/LoggerService'
+import { uuid } from '@/utils'
+
+import {
+  assertWorkspacePathNotReserved,
+  isHiddenWorkspaceName,
+  normalizeWorkspacePath,
+  splitWorkspacePath
+} from './pathPolicy'
+import type {
+  FileMutationResult,
+  ReadTextResult,
+  SearchResult,
+  WorkspaceBackend,
+  WorkspaceDescriptor,
+  WorkspaceEntry,
+  WorkspaceListOptions,
+  WorkspaceMutationContext,
+  WorkspaceRevision,
+  WorkspaceSearchOptions
+} from './types'
+
+const MAX_READ_BYTES = 50 * 1024
+const MAX_READ_LINES = 2_000
+const MAX_WRITE_BYTES = 1 * 1024 * 1024
+const MAX_SNAPSHOT_BYTES = 1 * 1024 * 1024
+const MAX_SEARCH_FILES = 10_000
+const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+const MAX_SEARCH_RESULTS = 100
+const logger = loggerService.withContext('AppSandboxBackend')
+
+type TrashEntry = {
+  sourcePath: string
+  trashUri: string
+  kind: 'file' | 'directory'
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength
+}
+
+function detectLineEnding(value: string): '\n' | '\r\n' {
+  return value.includes('\r\n') ? '\r\n' : '\n'
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function applyExactEdits(content: string, edits: { oldText: string; newText: string }[]): string {
+  if (edits.length === 0 || edits.length > 50) {
+    throw new Error('edit requires between 1 and 50 replacements.')
+  }
+
+  const ranges = edits.map((edit, index) => {
+    const oldText = normalizeLineEndings(edit.oldText)
+    const newText = normalizeLineEndings(edit.newText)
+    if (!oldText) throw new Error(`Edit ${index + 1} has an empty oldText.`)
+
+    const first = content.indexOf(oldText)
+    const last = content.lastIndexOf(oldText)
+    if (first < 0) throw new Error(`Edit ${index + 1} did not match the file.`)
+    if (first !== last) throw new Error(`Edit ${index + 1} matched more than once; include more context.`)
+
+    return { start: first, end: first + oldText.length, newText }
+  })
+
+  ranges.sort((left, right) => left.start - right.start)
+  for (let index = 1; index < ranges.length; index++) {
+    if (ranges[index - 1].end > ranges[index].start) {
+      throw new Error('Edits overlap; merge nearby replacements into one edit.')
+    }
+  }
+
+  let result = content
+  for (let index = ranges.length - 1; index >= 0; index--) {
+    const range = ranges[index]
+    result = result.slice(0, range.start) + range.newText + result.slice(range.end)
+  }
+  return result
+}
+
+function createUnifiedDiff(path: string, before: string, after: string): string {
+  const beforeLines = normalizeLineEndings(before).split('\n')
+  const afterLines = normalizeLineEndings(after).split('\n')
+  if (before === after) return ''
+
+  const lines: string[] = [`--- ${path}`, `+++ ${path}`]
+  const max = Math.max(beforeLines.length, afterLines.length)
+  for (let index = 0; index < max; index++) {
+    const oldLine = beforeLines[index]
+    const newLine = afterLines[index]
+    if (oldLine === newLine) continue
+    if (oldLine !== undefined) lines.push(`-${oldLine}`)
+    if (newLine !== undefined) lines.push(`+${newLine}`)
+  }
+  return lines.join('\n')
+}
+
+function isFile(entry: File | Directory): entry is File {
+  return entry instanceof File
+}
+
+/**
+ * Persistent workspace rooted inside the app's private document directory.
+ * This backend deliberately never exposes the app's general document root.
+ */
+export class AppSandboxBackend implements WorkspaceBackend {
+  readonly descriptor: WorkspaceDescriptor
+  get capabilities() {
+    return {
+      persistent: this.descriptor.kind !== 'ios_session',
+      readOnly: this.descriptor.readOnly,
+      supportsMove: true,
+      supportsTrash: true
+    } as const
+  }
+
+  private readonly root: Directory
+  private readonly stateRoot: Directory
+  private readonly trashRoot: Directory
+  private readonly trashManifestFile: File
+  private readonly mutationQueue = new Map<string, Promise<void>>()
+  private readonly trashEntries = new Map<string, TrashEntry>()
+  private trashManifestLoaded = false
+
+  constructor(descriptor: WorkspaceDescriptor) {
+    this.descriptor = descriptor
+    this.root =
+      descriptor.kind === 'app_sandbox'
+        ? new Directory(Paths.document, 'AgentWorkspaces', descriptor.id, 'root')
+        : new Directory(descriptor.rootUri)
+    this.stateRoot = new Directory(Paths.document, 'AgentState', descriptor.id)
+    // Keep external-folder trash on the same provider as the selected folder.
+    // Android SAF providers commonly reject a copy from content:// into the
+    // app-private file:// directory. The manifest remains private so the
+    // hidden implementation directory never becomes model-visible metadata.
+    this.trashRoot =
+      descriptor.kind === 'app_sandbox'
+        ? new Directory(this.stateRoot, 'trash')
+        : new Directory(this.root, '.cherry-agent-trash')
+    this.trashManifestFile = new File(this.stateRoot, 'trash', 'manifest.json')
+  }
+
+  async ensureReady(): Promise<void> {
+    if (this.descriptor.kind === 'app_sandbox') {
+      if (!this.root.exists) this.root.create({ intermediates: true, idempotent: true })
+    } else if (!this.root.exists) {
+      const accessMessage =
+        this.descriptor.kind === 'ios_session'
+          ? 'The selected iOS folder is no longer available. Pick it again to restore access.'
+          : 'The selected folder is no longer available. Pick it again or choose the mobile workspace.'
+      throw new Error(accessMessage)
+    }
+    if (!this.trashRoot.exists) this.trashRoot.create({ intermediates: true, idempotent: true })
+    if (!this.trashManifestLoaded) await this.loadTrashManifest()
+  }
+
+  async readText(path = '.', offset = 1, limit = MAX_READ_LINES): Promise<ReadTextResult> {
+    await this.ensureReady()
+    const normalized = this.filePath(path, false)
+    const file = this.fileFor(normalized)
+    this.assertFileExists(file, normalized)
+    const raw = await file.text()
+    const lines = normalizeLineEndings(raw).split('\n')
+    const startLine = Math.max(1, Math.floor(offset || 1))
+    const boundedLimit = Math.max(1, Math.min(MAX_READ_LINES, Math.floor(limit || MAX_READ_LINES)))
+    const selected = lines.slice(startLine - 1, startLine - 1 + boundedLimit)
+    let content = selected.join('\n')
+    const bytes = byteLength(content)
+    if (bytes > MAX_READ_BYTES) {
+      const encoded = new TextEncoder().encode(content)
+      content = new TextDecoder().decode(encoded.slice(0, MAX_READ_BYTES))
+    }
+
+    const endLine = Math.min(lines.length, startLine - 1 + selected.length)
+    return {
+      path: normalized,
+      content,
+      revision: this.revisionFor(file),
+      startLine,
+      endLine,
+      totalLines: lines.length,
+      truncated: endLine < lines.length || bytes > MAX_READ_BYTES,
+      size: file.size
+    }
+  }
+
+  async writeText(
+    path: string,
+    content: string,
+    expectedRevision?: string,
+    context?: WorkspaceMutationContext
+  ): Promise<FileMutationResult> {
+    const normalized = this.filePath(path, false)
+    this.assertWritable()
+    if (byteLength(content) > MAX_WRITE_BYTES) throw new Error('write payload exceeds the 1 MiB limit.')
+
+    return this.withMutation(normalized, async () => {
+      await this.ensureReady()
+      const file = this.fileFor(normalized)
+      if (file.exists && Paths.info(file.uri).isDirectory === true) {
+        throw new Error(`Path is a directory: ${normalized}`)
+      }
+      const beforeRevision = file.exists ? this.revisionFor(file) : null
+      this.assertExpectedRevision(expectedRevision, beforeRevision?.value)
+      const operationId = uuid()
+      const snapshotPath = await this.snapshotFile(normalized, file, operationId)
+      const before = file.exists ? await file.text() : ''
+      this.ensureParentDirectory(normalized)
+      if (!file.exists) file.create({ intermediates: true, overwrite: false })
+      file.write(content)
+      const result = {
+        path: normalized,
+        revision: this.revisionFor(file),
+        bytesWritten: byteLength(content),
+        operationId,
+        diff: createUnifiedDiff(normalized, before, content),
+        ...(snapshotPath ? { snapshotPath } : {})
+      }
+      await this.recordOperation('write', normalized, result, context, beforeRevision?.value)
+      return result
+    })
+  }
+
+  async editText(
+    path: string,
+    edits: { oldText: string; newText: string }[],
+    expectedRevision?: string,
+    context?: WorkspaceMutationContext
+  ): Promise<FileMutationResult> {
+    const normalized = this.filePath(path, false)
+    this.assertWritable()
+
+    return this.withMutation(normalized, async () => {
+      await this.ensureReady()
+      const file = this.fileFor(normalized)
+      this.assertFileExists(file, normalized)
+      const beforeRevision = this.revisionFor(file)
+      this.assertExpectedRevision(expectedRevision, beforeRevision.value)
+      const operationId = uuid()
+      const beforeRaw = await file.text()
+      const hasBom = beforeRaw.startsWith('\ufeff')
+      const beforeWithoutBom = hasBom ? beforeRaw.slice(1) : beforeRaw
+      const ending = detectLineEnding(beforeWithoutBom)
+      const before = normalizeLineEndings(beforeWithoutBom)
+      const afterNormalized = applyExactEdits(before, edits)
+      const after = `${hasBom ? '\ufeff' : ''}${afterNormalized.replace(/\n/g, ending)}`
+      if (byteLength(after) > MAX_WRITE_BYTES) throw new Error('edited file exceeds the 1 MiB limit.')
+      const snapshotPath = await this.snapshotFile(normalized, file, operationId)
+      file.write(after)
+      const result = {
+        path: normalized,
+        revision: this.revisionFor(file),
+        bytesWritten: byteLength(after),
+        operationId,
+        diff: createUnifiedDiff(normalized, beforeRaw, after),
+        ...(snapshotPath ? { snapshotPath } : {})
+      }
+      await this.recordOperation('edit', normalized, result, context, beforeRevision.value)
+      return result
+    })
+  }
+
+  async list(options: WorkspaceListOptions = {}): Promise<WorkspaceEntry[]> {
+    await this.ensureReady()
+    const basePath = this.directoryPath(options.path)
+    const maxEntries = Math.max(1, Math.min(2_000, options.maxEntries ?? 500))
+    const maxDepth = Math.max(0, Math.min(20, options.maxDepth ?? (options.recursive ? 5 : 0)))
+    const includeHidden = options.includeHidden ?? false
+    const result: WorkspaceEntry[] = []
+
+    const visit = (directory: Directory, relativePath: string, depth: number) => {
+      for (const entry of directory.list()) {
+        if (result.length >= maxEntries) return
+        if (!includeHidden && isHiddenWorkspaceName(entry.name)) continue
+        const childPath = relativePath === '.' ? entry.name : `${relativePath}/${entry.name}`
+        const entryIsFile = isFile(entry)
+        result.push({
+          path: childPath,
+          name: entry.name,
+          kind: entryIsFile ? 'file' : 'directory',
+          ...(entryIsFile
+            ? { size: entry.size ?? undefined, modificationTime: entry.modificationTime ?? null, mimeType: entry.type }
+            : { size: entry.size ?? undefined, modificationTime: entry.info().modificationTime ?? null })
+        })
+        if (!entryIsFile && depth < maxDepth) visit(entry, childPath, depth + 1)
+      }
+    }
+
+    visit(basePath, normalizeWorkspacePath(options.path), 0)
+    return result
+  }
+
+  async stat(path = '.'): Promise<WorkspaceEntry & { exists: true }> {
+    await this.ensureReady()
+    const normalized = normalizeWorkspacePath(path)
+    const entry = this.entryFor(normalized)
+    if (!entry.exists) throw new Error(`Path not found: ${normalized}`)
+    const entryIsFile = isFile(entry)
+    return {
+      path: normalized,
+      name: normalized === '.' ? this.descriptor.name : entry.name,
+      kind: entryIsFile ? 'file' : 'directory',
+      size: entryIsFile ? entry.size : (entry.size ?? undefined),
+      modificationTime: entryIsFile ? entry.modificationTime : (entry.info().modificationTime ?? null),
+      ...(entryIsFile ? { mimeType: entry.type } : {}),
+      exists: true
+    }
+  }
+
+  async search(query: string, options: WorkspaceSearchOptions = {}): Promise<SearchResult> {
+    await this.ensureReady()
+    if (!query) throw new Error('search requires a non-empty query.')
+    if (query.length > 200) throw new Error('search query is limited to 200 characters.')
+    const maxResults = Math.max(1, Math.min(MAX_SEARCH_RESULTS, options.maxResults ?? MAX_SEARCH_RESULTS))
+    const maxFileBytes = Math.max(1, Math.min(MAX_SEARCH_FILE_BYTES, options.maxFileBytes ?? MAX_SEARCH_FILE_BYTES))
+    const files = await this.list({
+      path: options.path,
+      recursive: true,
+      maxDepth: 20,
+      maxEntries: MAX_SEARCH_FILES,
+      includeHidden: options.includeHidden ?? false
+    })
+    let regex: RegExp | null = null
+    if (options.mode === 'regex') {
+      try {
+        regex = new RegExp(query, 'g')
+      } catch {
+        throw new Error('search query is not a valid regular expression.')
+      }
+    }
+    const matches: SearchResult['matches'] = []
+    let scannedFiles = 0
+
+    for (const entry of files) {
+      if (entry.kind !== 'file' || (entry.size ?? 0) > maxFileBytes) continue
+      scannedFiles++
+      const file = this.fileFor(entry.path)
+      let text: string
+      try {
+        text = normalizeLineEndings(await file.text())
+      } catch {
+        continue
+      }
+      const lines = text.split('\n')
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index]
+        if (regex) regex.lastIndex = 0
+        const matched = regex ? regex.test(line) : line.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+        if (!matched) continue
+        matches.push({ path: entry.path, line: index + 1, text: line.slice(0, 500) })
+        if (matches.length >= maxResults) {
+          return { query, matches, truncated: true, scannedFiles }
+        }
+      }
+      if (scannedFiles % 50 === 0) await Promise.resolve()
+    }
+
+    return { query, matches, truncated: false, scannedFiles }
+  }
+
+  async mkdir(path: string, context?: WorkspaceMutationContext): Promise<{ path: string; operationId: string }> {
+    const normalized = this.directoryPathName(path)
+    this.assertWritable()
+    return this.withMutation(normalized, async () => {
+      await this.ensureReady()
+      const directory = this.directoryFor(normalized)
+      if (!directory.exists) directory.create({ intermediates: true, idempotent: true })
+      const result = { path: normalized, operationId: uuid() }
+      await this.recordOperation('mkdir', normalized, result, context)
+      return result
+    })
+  }
+
+  async copy(
+    source: string,
+    destination: string,
+    context?: WorkspaceMutationContext
+  ): Promise<{ source: string; destination: string; operationId: string }> {
+    return this.copyOrMove(source, destination, false, context)
+  }
+
+  async move(
+    source: string,
+    destination: string,
+    context?: WorkspaceMutationContext
+  ): Promise<{ source: string; destination: string; operationId: string }> {
+    return this.copyOrMove(source, destination, true, context)
+  }
+
+  async trash(
+    path: string,
+    context?: WorkspaceMutationContext
+  ): Promise<{ path: string; trashPath: string; operationId: string }> {
+    const normalized = this.filePath(path, false)
+    this.assertWritable()
+    if (normalized === '.') throw new Error('The workspace root cannot be trashed.')
+    return this.withMutation(normalized, async () => {
+      await this.ensureReady()
+      const source = this.entryFor(normalized)
+      if (!source.exists) throw new Error(`Path not found: ${normalized}`)
+      const operationId = uuid()
+      const trashDirectory = new Directory(this.trashRoot, operationId)
+      trashDirectory.create({ intermediates: true, idempotent: true })
+      const trashTarget = isFile(source)
+        ? new File(trashDirectory, source.name)
+        : new Directory(trashDirectory, source.name)
+      this.relocate(source, trashTarget, true)
+      const trashPath = `@trash/${operationId}/${source.name}`
+      this.trashEntries.set(trashPath, {
+        sourcePath: normalized,
+        trashUri: trashTarget.uri,
+        kind: isFile(source) ? 'file' : 'directory'
+      })
+      await this.persistTrashManifest()
+      const result = { path: normalized, trashPath, operationId }
+      await this.recordOperation('trash', normalized, result, context)
+      return result
+    })
+  }
+
+  async restore(
+    trashPath: string,
+    destination?: string,
+    context?: WorkspaceMutationContext
+  ): Promise<{ path: string; operationId: string }> {
+    this.assertWritable()
+    const entry = this.trashEntries.get(trashPath)
+    if (!entry) throw new Error('Trash item is no longer available in this app session.')
+    const targetPath = this.filePath(destination ?? entry.sourcePath, false)
+    return this.withMutation(targetPath, async () => {
+      const source = entry.kind === 'file' ? new File(entry.trashUri) : new Directory(entry.trashUri)
+      if (!source.exists) throw new Error('Trash item no longer exists.')
+      const target = entry.kind === 'file' ? this.fileFor(targetPath) : this.directoryFor(targetPath)
+      this.ensureParentDirectory(targetPath)
+      this.relocate(source, target, true)
+      this.trashEntries.delete(trashPath)
+      await this.persistTrashManifest()
+      const result = { path: targetPath, operationId: uuid() }
+      await this.recordOperation('restore', targetPath, result, context, undefined, trashPath)
+      return result
+    })
+  }
+
+  private async copyOrMove(
+    sourcePath: string,
+    destinationPath: string,
+    move: boolean,
+    context?: WorkspaceMutationContext
+  ) {
+    const sourceNormalized = this.filePath(sourcePath, false)
+    const destinationNormalized = this.filePath(destinationPath, false)
+    this.assertWritable()
+    const lockKey = `${sourceNormalized}->${destinationNormalized}`
+    return this.withMutation(lockKey, async () => {
+      await this.ensureReady()
+      const source = this.entryFor(sourceNormalized)
+      if (!source.exists) throw new Error(`Path not found: ${sourceNormalized}`)
+      const destination = isFile(source)
+        ? this.fileFor(destinationNormalized)
+        : this.directoryFor(destinationNormalized)
+      if (destination.exists) throw new Error(`Destination already exists: ${destinationNormalized}`)
+      this.ensureParentDirectory(destinationNormalized)
+      this.relocate(source, destination, move)
+      const result = { source: sourceNormalized, destination: destinationNormalized, operationId: uuid() }
+      await this.recordOperation(
+        move ? 'move' : 'copy',
+        sourceNormalized,
+        result,
+        context,
+        undefined,
+        destinationNormalized
+      )
+      return result
+    })
+  }
+
+  private filePath(path: string | undefined, allowRoot = true): string {
+    const normalized = normalizeWorkspacePath(path, allowRoot)
+    assertWorkspacePathNotReserved(normalized)
+    return normalized
+  }
+
+  private directoryPath(path: string | undefined): Directory {
+    const normalized = this.filePath(path)
+    return this.directoryFor(normalized)
+  }
+
+  private directoryPathName(path: string | undefined): string {
+    return this.filePath(path)
+  }
+
+  private directoryFor(path: string): Directory {
+    const segments = splitWorkspacePath(path)
+    return new Directory(this.root, ...segments)
+  }
+
+  private fileFor(path: string): File {
+    const segments = splitWorkspacePath(path, false)
+    return new File(this.root, ...segments)
+  }
+
+  private entryFor(path: string): File | Directory {
+    if (path === '.') return this.root
+    const segments = splitWorkspacePath(path, false)
+    const file = new File(this.root, ...segments)
+    if (file.exists && Paths.info(file.uri).isDirectory !== true) return file
+    return new Directory(this.root, ...segments)
+  }
+
+  private assertFileExists(file: File, path: string): void {
+    if (!file.exists) throw new Error(`File not found: ${path}`)
+    if (Paths.info(file.uri).isDirectory === true || file.type === 'inode/directory') {
+      throw new Error(`Path is a directory: ${path}`)
+    }
+  }
+
+  private assertWritable(): void {
+    if (this.descriptor.readOnly) throw new Error('The active workspace is read-only.')
+  }
+
+  private assertExpectedRevision(expected: string | undefined, actual: string | undefined): void {
+    if (expected !== undefined && expected !== actual) {
+      throw new Error(`File changed since it was read. Expected revision ${expected}, got ${actual ?? 'missing'}.`)
+    }
+  }
+
+  private revisionFor(file: File): WorkspaceRevision {
+    if (!file.exists) throw new Error('Cannot calculate a revision for a missing file.')
+    return {
+      value: file.md5 ?? `${file.size}:${file.modificationTime ?? 0}`,
+      size: file.size,
+      modificationTime: file.modificationTime
+    }
+  }
+
+  private ensureParentDirectory(path: string): void {
+    const segments = splitWorkspacePath(path, false)
+    segments.pop()
+    const parent = new Directory(this.root, ...segments)
+    if (!parent.exists) parent.create({ intermediates: true, idempotent: true })
+  }
+
+  private async snapshotFile(path: string, file: File, operationId: string): Promise<string | undefined> {
+    if (!file.exists || file.size > MAX_SNAPSHOT_BYTES) return undefined
+    const snapshotDirectory = new Directory(this.stateRoot, 'snapshots', operationId)
+    snapshotDirectory.create({ intermediates: true, idempotent: true })
+    const snapshotFile = new File(snapshotDirectory, path.replaceAll('/', '__'))
+    try {
+      file.copy(snapshotFile)
+      return snapshotFile.uri
+    } catch (error) {
+      // Some SAF providers do not permit cross-provider copies. Snapshots are
+      // a safety enhancement, so do not make the requested edit unusable.
+      logger.warn('Unable to create an agent workspace snapshot:', error as Error)
+      return undefined
+    }
+  }
+
+  private relocate(source: File | Directory, destination: File | Directory, move: boolean): void {
+    // Android SAF providers can reject a cross-provider rename. Copy/delete
+    // gives external folders the same logical move semantics while retaining
+    // the safer atomic rename for the private app sandbox.
+    if (move && this.descriptor.kind !== 'app_sandbox') {
+      source.copy(destination)
+      source.delete()
+      return
+    }
+    if (move) source.move(destination)
+    else source.copy(destination)
+  }
+
+  private async loadTrashManifest(): Promise<void> {
+    this.trashManifestLoaded = true
+    if (!this.trashManifestFile.exists) return
+    try {
+      const parsed = JSON.parse(await this.trashManifestFile.text()) as Record<string, Partial<TrashEntry>>
+      for (const [trashPath, entry] of Object.entries(parsed)) {
+        if (
+          !trashPath.startsWith('@trash/') ||
+          typeof entry.sourcePath !== 'string' ||
+          typeof entry.trashUri !== 'string' ||
+          (entry.kind !== 'file' && entry.kind !== 'directory')
+        ) {
+          continue
+        }
+        this.trashEntries.set(trashPath, {
+          sourcePath: normalizeWorkspacePath(entry.sourcePath, false),
+          trashUri: entry.trashUri,
+          kind: entry.kind
+        })
+      }
+    } catch (error) {
+      logger.warn('Unable to load the agent trash manifest; starting with an empty restore list:', error as Error)
+      this.trashEntries.clear()
+    }
+  }
+
+  private async persistTrashManifest(): Promise<void> {
+    try {
+      if (!this.trashManifestFile.exists) this.trashManifestFile.create({ intermediates: true, overwrite: false })
+      this.trashManifestFile.write(JSON.stringify(Object.fromEntries(this.trashEntries), null, 2))
+    } catch (error) {
+      logger.warn('Unable to persist the agent trash manifest:', error as Error)
+    }
+  }
+
+  private async recordOperation(
+    action: string,
+    path: string,
+    result: {
+      operationId: string
+      revision?: WorkspaceRevision
+      bytesWritten?: number
+      snapshotPath?: string
+      trashPath?: string
+    },
+    context?: WorkspaceMutationContext,
+    beforeRevision?: string,
+    destination?: string
+  ): Promise<void> {
+    try {
+      const { agentWorkspaceDatabase } = await import('@database')
+      await agentWorkspaceDatabase.recordOperation({
+        id: result.operationId,
+        workspaceId: this.descriptor.id,
+        topicId: context?.topicId,
+        toolCallId: context?.toolCallId,
+        action,
+        path,
+        destination: destination ?? result.trashPath,
+        beforeRevision,
+        afterRevision: result.revision?.value,
+        status: 'success',
+        approval: 'approved',
+        bytesWritten: result.bytesWritten,
+        snapshotUri: result.snapshotPath
+      })
+    } catch (error) {
+      // Audit persistence must never turn a successful file operation into a
+      // failed tool call (for example while an older database is migrating).
+      logger.warn('Unable to persist agent workspace operation metadata:', error as Error)
+    }
+  }
+
+  private async withMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationQueue.get(key) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    const settled = current.then(
+      () => undefined,
+      () => undefined
+    )
+    this.mutationQueue.set(key, settled)
+    try {
+      return await current
+    } finally {
+      if (this.mutationQueue.get(key) === settled) this.mutationQueue.delete(key)
+    }
+  }
+}

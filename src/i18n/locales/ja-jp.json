@@ -10,7 +10,22 @@
       "selectModel": "Select Model",
       "send": "Send",
       "stop": "Stop",
-      "title": "Agent"
+      "title": "Agent",
+      "workspace": {
+        "androidDescription": "Android フォルダーへのアクセス",
+        "androidFolder": "Android フォルダー",
+        "approvalContent": "エージェントが現在のモバイルワークスペースで{{operation}}{{path}}を要求しています。",
+        "approvalTitle": "エージェントによるワークスペースの変更を許可しますか？",
+        "defaultName": "モバイルワークスペース",
+        "destructiveOperation": "破壊的な操作",
+        "fileChange": "ファイル変更",
+        "iosDescription": "このアプリセッションで利用可能",
+        "iosFolder": "iOS フォルダー",
+        "pickFolder": "デバイスのフォルダーを選択…",
+        "pickFolderDescription": "システムのファイルピッカーを使用",
+        "privateDescription": "アプリのプライベートストレージ",
+        "title": "エージェントのワークスペース"
+      }
     },
     "assistants": {
       "market": {

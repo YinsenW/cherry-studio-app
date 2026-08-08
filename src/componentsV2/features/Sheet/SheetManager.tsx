@@ -4,6 +4,7 @@ import AssistantItemSheet from '@/componentsV2/features/Assistant/AssistantItemS
 import MarketplaceServerSheet from '@/componentsV2/features/MCP/McpMarketplaceServerSheet'
 import McpServerItemSheet from '@/componentsV2/features/MCP/McpServerItemSheet'
 import { AddModelSheet } from '@/componentsV2/features/SettingsScreen/providers/AddModelSheet'
+import { AgentWorkspaceSheet } from '@/componentsV2/features/Sheet/AgentWorkspaceSheet'
 import ExpandInputSheet from '@/componentsV2/features/Sheet/ExpandInputSheet'
 import { HeadersEditSheet } from '@/componentsV2/features/Sheet/HeadersEditSheet'
 import { McpDescriptionSheet } from '@/componentsV2/features/Sheet/McpDescriptionSheet'
@@ -48,6 +49,7 @@ const SheetManager: React.FC = () => {
       <WebSearchProviderSheet />
       <ImportDataSheet />
       <ExpandInputSheet />
+      <AgentWorkspaceSheet />
       <PromptDetailSheet />
       <ProviderCheckSheet />
       <HeadersEditSheet />

@@ -51,7 +51,8 @@ function makeToolResponse(
   toolCallId: string,
   args: Record<string, unknown>,
   status: MCPToolResponse['status'],
-  resultText?: string
+  resultText?: string,
+  resultDetails?: unknown
 ): MCPToolResponse {
   const registeredRemoteTool = getMcpAgentToolMetadata(name)
   const remoteTool = /^mcp:([^:]+):(.+)$/.exec(name)
@@ -72,7 +73,15 @@ function makeToolResponse(
     toolCallId,
     arguments: args,
     status,
-    ...(resultText ? { response: { type: 'text', text: resultText } } : {})
+    ...(resultText || resultDetails !== undefined
+      ? {
+          response: {
+            type: 'text',
+            text: resultText ?? '',
+            ...(resultDetails !== undefined ? { details: resultDetails } : {})
+          }
+        }
+      : {})
   }
 }
 
@@ -175,11 +184,40 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
         await emit({
           type: ChunkType.MCP_TOOL_COMPLETE,
           responses: [
-            makeToolResponse(pendingTool?.name ?? 'tool', event.toolCallId, pendingTool?.args ?? {}, status, resultText)
+            makeToolResponse(
+              pendingTool?.name ?? 'tool',
+              event.toolCallId,
+              pendingTool?.args ?? {},
+              status,
+              resultText,
+              event.result?.details
+            )
           ]
         })
         pendingTools.delete(event.toolCallId)
         hasVisibleOutput = true
+        break
+      }
+
+      case 'tool_execution_update': {
+        const pendingTool = pendingTools.get(event.toolCallId)
+        const progressText = event.partialResult?.content
+          ?.filter((part: { type?: string }) => part.type === 'text')
+          .map((part: { text?: string }) => part.text ?? '')
+          .join('')
+        await emit({
+          type: ChunkType.MCP_TOOL_IN_PROGRESS,
+          responses: [
+            makeToolResponse(
+              pendingTool?.name ?? event.toolName,
+              event.toolCallId,
+              pendingTool?.args ?? (event.args as Record<string, unknown>),
+              'invoking',
+              progressText,
+              event.partialResult?.details
+            )
+          ]
+        })
         break
       }
 

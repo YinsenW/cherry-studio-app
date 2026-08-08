@@ -1,4 +1,5 @@
 // Unified exports for all mappers
+export * from './agentWorkspaces.mapper'
 export * from './assistants.mapper'
 export * from './files.mapper'
 export * from './mcp.mapper'

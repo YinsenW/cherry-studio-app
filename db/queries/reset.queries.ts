@@ -2,6 +2,9 @@ import { loggerService } from '@/services/LoggerService'
 
 import { db } from '..'
 import {
+  agentFileOperations,
+  agentTopicWorkspaces,
+  agentWorkspaces,
   assistants,
   files,
   mcp,
@@ -30,6 +33,13 @@ export async function clearAllTables(): Promise<void> {
       // 1. 删除消息块（依赖于消息）
       await tx.delete(messageBlocks)
       logger.info('Cleared message_blocks table')
+
+      // Agent workspaces keep topic bindings and operation metadata. Remove
+      // bindings before topics/workspaces so foreign-key checks stay valid.
+      await tx.delete(agentFileOperations)
+      await tx.delete(agentTopicWorkspaces)
+      await tx.delete(agentWorkspaces)
+      logger.info('Cleared agent workspace tables')
 
       // 2. 删除消息（依赖于主题和助手）
       await tx.delete(messages)

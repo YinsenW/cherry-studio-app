@@ -33,6 +33,11 @@ import { AgentService } from './AgentService'
 import { createAgentEventToChunk } from './agentToChunk'
 import { messagesToPiContext, messageToPiUserMessage } from './messagesToPiContext'
 import { aiSdkToolToAgentTool } from './toolAdapter'
+import { buildAgentSystemPrompt } from './workspace/agentPrompt'
+import { createMobileWorkspaceTools } from './workspace/mobileWorkspaceTools'
+import { ToolApprovalCoordinator } from './workspace/ToolApprovalCoordinator'
+import type { WorkspaceBackend } from './workspace/types'
+import { workspaceService } from './workspace/WorkspaceService'
 
 const logger = loggerService.withContext('sendAgentMessage')
 
@@ -128,9 +133,13 @@ function validateAgentTools(tools: AgentTool[]): AgentTool[] {
   return accepted
 }
 
-async function loadAgentTools(assistant: Assistant): Promise<AgentTool[]> {
+async function loadAgentTools(
+  assistant: Assistant,
+  topicId?: Topic['id'],
+  providedWorkspaceBackend?: WorkspaceBackend | null
+): Promise<AgentTool[]> {
   const model = getAssistantModel(assistant)
-  if (!model || assistant.settings?.toolUseMode !== 'function' || !isFunctionCallingModel(model)) {
+  if (!model || !isFunctionCallingModel(model)) {
     return []
   }
 
@@ -159,7 +168,19 @@ async function loadAgentTools(assistant: Assistant): Promise<AgentTool[]> {
     }
   }
 
-  return validateAgentTools([...builtInTools, ...(await loadMcpAgentTools(assistant))])
+  let mobileWorkspaceTools: AgentTool[] = []
+  if (providedWorkspaceBackend) {
+    mobileWorkspaceTools = createMobileWorkspaceTools(providedWorkspaceBackend, topicId ? { topicId } : undefined)
+  } else if (providedWorkspaceBackend === undefined && topicId) {
+    try {
+      const workspaceBackend = await workspaceService.getBackendForTopic(topicId)
+      mobileWorkspaceTools = createMobileWorkspaceTools(workspaceBackend, topicId ? { topicId } : undefined)
+    } catch (error) {
+      logger.warn('Agent will continue without mobile workspace tools:', error as Error)
+    }
+  }
+
+  return validateAgentTools([...mobileWorkspaceTools, ...builtInTools, ...(await loadMcpAgentTools(assistant))])
 }
 
 /**
@@ -182,6 +203,9 @@ export async function runAgentSession(
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   let abortAgent: (() => void) | null = null
   const resolvedAssistant = resolveAgentAssistant(assistant)
+  // Keep "allow this session" scoped to one agent run. A global singleton
+  // would accidentally carry a previous approval into a later conversation.
+  const approvalCoordinator = new ToolApprovalCoordinator()
 
   try {
     // 1. 复用现有块流回调（文本块 / 工具块 / 错误块渲染与落库）
@@ -221,14 +245,43 @@ export async function runAgentSession(
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    const tools = await loadAgentTools(resolvedAssistant)
+    const canUseAgentTools = isFunctionCallingModel(resolvedAssistant.model!)
+    let workspaceBackend: WorkspaceBackend | null = null
+    if (canUseAgentTools) {
+      try {
+        workspaceBackend = await workspaceService.getBackendForTopic(topicId)
+      } catch (error) {
+        // A database migration, native file-system permission, or an older
+        // test/runtime may temporarily make the workspace unavailable. The
+        // core agent remains useful with its other tools; do not fail the
+        // whole conversation just because the optional mobile filesystem is
+        // unavailable.
+        logger.warn('Agent will continue without mobile workspace tools:', error as Error)
+      }
+    }
+    const workspace =
+      workspaceBackend?.descriptor ??
+      ({
+        id: 'default-mobile-workspace',
+        name: '手机工作区',
+        kind: 'app_sandbox',
+        rootUri: '',
+        readOnly: false,
+        createdAt: 0,
+        updatedAt: 0
+      } as const)
+    const tools = canUseAgentTools ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend) : []
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,
       tools,
-      resolvedAssistant.prompt || undefined,
+      buildAgentSystemPrompt(resolvedAssistant.prompt || undefined, workspace),
       contextMessages as never[],
-      resolvedAssistant
+      resolvedAssistant,
+      {
+        toolExecution: 'parallel',
+        beforeToolCall: approvalCoordinator.beforeToolCall.bind(approvalCoordinator)
+      }
     )
 
     // 4. 事件 → chunk → 现有块流

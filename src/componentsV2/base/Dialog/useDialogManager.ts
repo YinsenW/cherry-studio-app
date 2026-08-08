@@ -89,6 +89,10 @@ export function useDialogManagerState() {
   // Handle open change (for overlay dismiss)
   const handleOpenChange = (open: boolean) => {
     if (!open) {
+      // Treat an overlay/backdrop dismissal as a cancellation as well. This
+      // is important for async callers such as agent approval gates: without
+      // it, dismissing the dialog would leave their promise unresolved.
+      state.onCancel?.()
       dismissDialog()
     }
   }

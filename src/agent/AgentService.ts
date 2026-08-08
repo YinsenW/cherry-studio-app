@@ -1,4 +1,12 @@
-import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
+import type {
+  AfterToolCallContext,
+  AfterToolCallResult,
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  BeforeToolCallResult,
+  ToolExecutionMode
+} from '@earendil-works/pi-agent-core'
 import { Agent } from '@earendil-works/pi-agent-core'
 import type { Message as PiMessage, UserMessage } from '@earendil-works/pi-ai'
 
@@ -11,6 +19,12 @@ const DEFAULT_SYSTEM_PROMPT = [
   'You can use the provided tools to read and control device capabilities such as reminders, calendar, shortcuts, and fetching web content.',
   'Plan multi-step tasks, call tools when needed, and summarize results for the user.'
 ].join('\n')
+
+export type AgentServiceOptions = {
+  toolExecution?: ToolExecutionMode
+  beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>
+  afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>
+}
 
 /**
  * 封装 pi-agent-core 的 Agent，绑定到 Cherry 的模型与 provider。
@@ -28,7 +42,8 @@ export class AgentService {
     tools: AgentTool[],
     systemPrompt?: string,
     historyMessages?: PiMessage[],
-    requestAssistant?: Assistant
+    requestAssistant?: Assistant,
+    options?: AgentServiceOptions
   ) {
     this.agent = new Agent({
       initialState: {
@@ -44,7 +59,10 @@ export class AgentService {
         tools,
         ...(historyMessages ? { messages: historyMessages as never } : {})
       },
-      streamFn: createStreamFn(model, provider, requestAssistant)
+      streamFn: createStreamFn(model, provider, requestAssistant),
+      toolExecution: options?.toolExecution ?? 'parallel',
+      ...(options?.beforeToolCall ? { beforeToolCall: options.beforeToolCall } : {}),
+      ...(options?.afterToolCall ? { afterToolCall: options.afterToolCall } : {})
     })
   }
 

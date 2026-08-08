@@ -10,7 +10,22 @@
       "selectModel": "選擇模型",
       "send": "傳送",
       "stop": "停止",
-      "title": "智慧體"
+      "title": "智慧體",
+      "workspace": {
+        "androidDescription": "Android 資料夾存取",
+        "androidFolder": "Android 資料夾",
+        "approvalContent": "智慧體要求在目前行動工作區執行{{operation}}{{path}}。",
+        "approvalTitle": "允許智慧體修改工作區？",
+        "defaultName": "手機工作區",
+        "destructiveOperation": "刪除或移動操作",
+        "fileChange": "檔案修改",
+        "iosDescription": "僅在本次應用程式工作階段可用",
+        "iosFolder": "iOS 資料夾",
+        "pickFolder": "選擇裝置資料夾…",
+        "pickFolderDescription": "使用系統檔案選擇器開啟資料夾",
+        "privateDescription": "應用程式私有資料目錄",
+        "title": "智慧體工作區"
+      }
     },
     "assistants": {
       "market": {
