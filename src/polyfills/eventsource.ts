@@ -1,13 +1,16 @@
 /**
- * React Native 兼容的 eventsource / eventsource-parser stub
+ * React Native 兼容的 eventsource stub
  *
- * @modelcontextprotocol/client v2 的根入口静态导入了 eventsource 和
- * eventsource-parser/stream，但这两个包需要全局 Event 类（Hermes 没有）
- * 和 Node HTTP 模块（RN 没有），导致 Hermes 加载时直接
+ * @modelcontextprotocol/client v2 的根入口静态导入了 eventsource，
+ * 而该实现需要全局 Event 类（Hermes 没有）和 Node HTTP 模块（RN 没有），
+ * 导致 Hermes 加载时直接
  * ReferenceError: Event is not defined → 闪退。
  *
  * Cherry Studio 使用自研的 RNStreamableHTTPClientTransport（内置
- * RNEventSourceParser），不依赖这两个包的任何功能。因此安全地 stub 掉。
+ * RNEventSourceParser），不依赖 eventsource 的任何功能。因此安全地 stub 掉。
+ *
+ * eventsource-parser 是独立、平台无关的 SSE parser，同时被 AI SDK 主链路使用，
+ * 必须由 Metro 解析到真实依赖，不得在此 stub。
  */
 
 // ---- eventsource stub ----
@@ -37,17 +40,3 @@ export class EventSource {
 }
 
 export default EventSource
-
-// ---- eventsource-parser/stream stub ----
-
-export const EventSourceParserStream = class {
-  readable: ReadableStream<unknown>
-  writable: WritableStream<unknown>
-
-  constructor() {
-    // 创建一个空的可写/可读流对
-    const { readable, writable } = new TransformStream()
-    this.readable = readable
-    this.writable = writable
-  }
-}

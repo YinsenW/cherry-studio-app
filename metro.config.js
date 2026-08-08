@@ -1,5 +1,6 @@
 const { getDefaultConfig } = require('expo/metro-config')
 const { withUniwindConfig } = require('uniwind/metro')
+const { createEventSourceResolver } = require('./scripts/metro/createEventSourceResolver')
 
 const config = getDefaultConfig(__dirname)
 
@@ -9,21 +10,15 @@ config.resolver.sourceExts.push('sql')
 config.resolver.resolverMainFields = ['react-native', 'browser', 'main']
 config.resolver.platforms = ['ios', 'android', 'native', 'web']
 
-// @modelcontextprotocol/client v2 导入了 eventsource 和 eventsource-parser，
-// 这两个包需要 Node Event 类（Hermes 没有）和 HTTP 模块（RN 没有），
-// 导致模块加载时 ReferenceError: Event is not defined → 闪退。
-// Cherry Studio 使用自研的 RNStreamableHTTPClientTransport，不依赖这两个包。
-// 用 resolveRequest 拦截替换为 stub。
+// @modelcontextprotocol/client v2 的 eventsource 实现依赖 Hermes 不具备的
+// Event / Node HTTP 能力。Cherry Studio 的 MCP 走自研 RN transport，因此只对
+// eventsource 本身使用 stub。
+//
+// 不能拦截 eventsource-parser：AI SDK 的 Provider 流也依赖它解析 SSE。
+// 把 parser 替换为透传 stub 会使 data 成为 undefined，并导致主聊天链路
+// 报 "JSON parsing failed: Text: undefined"。
 const POLYFILL_PATH = require('path').resolve(__dirname, 'src/polyfills/eventsource.ts')
 const originalResolveRequest = config.resolver.resolveRequest
-config.resolver.resolveRequest = (context, moduleName, platform) => {
-  if (moduleName === 'eventsource' || moduleName.startsWith('eventsource-parser')) {
-    return { filePath: POLYFILL_PATH, type: 'sourceFile' }
-  }
-  if (originalResolveRequest) {
-    return originalResolveRequest(context, moduleName, platform)
-  }
-  return context.resolveRequest(context, moduleName, platform)
-}
+config.resolver.resolveRequest = createEventSourceResolver(originalResolveRequest, POLYFILL_PATH)
 
 module.exports = withUniwindConfig(config, { cssEntryFile: './global.css' })
