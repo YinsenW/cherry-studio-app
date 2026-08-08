@@ -6,7 +6,7 @@
 
 // Import after mocks
 import { RNStreamableHTTPClientTransport } from '@cherrystudio/react-native-streamable-http'
-import { Client } from '@modelcontextprotocol/sdk/client'
+import { Client } from '@modelcontextprotocol/client'
 
 import type { MCPServer } from '@/types/mcp'
 
@@ -22,7 +22,7 @@ const mockCreateMobileOAuthProvider = jest.fn()
 const mockPerformOAuthFlow = jest.fn()
 
 // Mock modules - Jest hoists these to the top
-jest.mock('@modelcontextprotocol/sdk/client', () => ({
+jest.mock('@modelcontextprotocol/client', () => ({
   Client: jest.fn().mockImplementation(() => ({
     connect: mockConnect,
     close: mockClose,
