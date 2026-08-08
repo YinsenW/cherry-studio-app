@@ -133,6 +133,13 @@ class McpClientService {
   // ==================== Public API ====================
 
   /**
+   * Check whether a client is currently connected for a given server.
+   */
+  public isConnected(serverId: string): boolean {
+    return this.clients.has(serverId)
+  }
+
+  /**
    * Get or create a client connection for an MCP server
    *
    * Handles:

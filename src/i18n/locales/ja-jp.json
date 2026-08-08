@@ -430,6 +430,12 @@
         "inMemory": "内蔵",
         "sse": "サーバー送信イベント",
         "streamableHttp": "StreamableHTTP"
+      },
+      "connectivity": {
+        "status": "接続状態",
+        "connected": "接続済み",
+        "failed": "失敗",
+        "test": "接続テスト"
       }
     },
     "menu": {

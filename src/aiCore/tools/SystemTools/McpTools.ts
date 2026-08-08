@@ -11,9 +11,12 @@ const logger = loggerService.withContext('McpTools')
 /**
  * 把用户配置的 MCP 服务器工具接入 agent。
  *
+ * 只接入 streamableHttp 类型的服务器——SSE 尚未支持，inMemory
+ * 服务器的工具已在 sendAgentMessage 中通过 SystemTool / AndroidTool
+ * 等直接注入，不需要经由 MCP 协议层。
+ *
  * 复用现有链路（fetchAssistantMcpTools + mcpClientService.callTool），
- * 一次接线让 agent 获得用户所有已启用的 MCP 能力
- * （GitHub、数据库、浏览器、内部工具……）。
+ * 一次接线让 agent 获得用户所有已启用的远程 MCP 能力。
  */
 export async function createMcpTools(assistant: Assistant): Promise<AgentTool[]> {
   const tools: AgentTool[] = []
@@ -24,6 +27,10 @@ export async function createMcpTools(assistant: Assistant): Promise<AgentTool[]>
     for (const mcpTool of mcpTools) {
       const server = await mcpService.getMcpServer(mcpTool.serverId)
       if (!server) continue
+
+      // 只处理 streamableHttp——inMemory 的工具已经在 SystemTool
+      // 里直接注入，SSE 尚未支持
+      if (server.type !== 'streamableHttp') continue
 
       tools.push({
         name: mcpTool.id,

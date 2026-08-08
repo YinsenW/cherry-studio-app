@@ -430,6 +430,12 @@
         "inMemory": "встроенный",
         "sse": "События, отправляемые сервером",
         "streamableHttp": "StreamableHTTP"
+      },
+      "connectivity": {
+        "status": "Подключение",
+        "connected": "Подключено",
+        "failed": "Ошибка",
+        "test": "Тест"
       }
     },
     "menu": {

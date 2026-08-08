@@ -28,6 +28,8 @@ import { useSearch } from '@/hooks/useSearch'
 import { useToast } from '@/hooks/useToast'
 import type { McpStackParamList } from '@/navigators/McpStackNavigator'
 import { loggerService } from '@/services/LoggerService'
+import { mcpClientService } from '@/services/mcp/McpClientService'
+import type { ConnectivityResult } from '@/types/mcp'
 
 const logger = loggerService.withContext('McpDetailScreen')
 
@@ -54,7 +56,7 @@ export default function McpDetailScreen() {
   )
 
   const isBuiltIn = mcpServer?.type === 'inMemory'
-  const isHttpType = mcpServer?.type === 'streamableHttp' || mcpServer?.type === 'sse'
+  const isStreamableHttp = mcpServer?.type === 'streamableHttp'
 
   // Local state for immediate UI updates
   const [localDisabledTools, setLocalDisabledTools] = useState<string[]>([])
@@ -65,7 +67,26 @@ export default function McpDetailScreen() {
 
   // OAuth hook for HTTP type servers
   // Use localUrl since it's always current (synced with mcpServer.baseUrl and updated by user edits)
-  const { isAuthenticated, isAuthenticating, triggerOAuth, clearAuth } = useMcpOAuth(isHttpType ? localUrl : undefined)
+  const { isAuthenticated, isAuthenticating, triggerOAuth, clearAuth } = useMcpOAuth(isStreamableHttp ? localUrl : undefined)
+
+  // Connection check state
+  const [isCheckingConn, setIsCheckingConn] = useState(false)
+  const [connectivity, setConnectivity] = useState<ConnectivityResult | null>(null)
+
+  const isConnected = mcpId ? mcpClientService.isConnected(mcpId) : false
+
+  const handleTestConnection = async () => {
+    if (!mcpServer || !isStreamableHttp) return
+    setIsCheckingConn(true)
+    try {
+      const result = await mcpClientService.checkConnectivity(mcpServer)
+      setConnectivity(result)
+    } catch {
+      setConnectivity({ connected: false, error: 'Connection check failed', errorCode: 'UNKNOWN' as const })
+    } finally {
+      setIsCheckingConn(false)
+    }
+  }
 
   // Sync local state with mcpServer
   useEffect(() => {
@@ -236,6 +257,33 @@ export default function McpDetailScreen() {
                   <Text>{t('common.enabled')}</Text>
                   <Switch isSelected={mcpServer?.isActive ?? false} onSelectedChange={handleActiveChange} />
                 </Row>
+                {/* Connection Status — only for streamableHttp servers */}
+                {isStreamableHttp && (
+                  <Row>
+                    <Text>{t('mcp.connectivity.status')}</Text>
+                    <XStack className="items-center gap-2">
+                      {isConnected ? (
+                        <Text className="text-green-500 text-sm">{t('mcp.connectivity.connected')}</Text>
+                      ) : connectivity?.connected === false ? (
+                        <Text className="text-red-400 text-sm">{t('mcp.connectivity.failed')}</Text>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        className="primary-container rounded-xl border"
+                        variant="ghost"
+                        onPress={handleTestConnection}
+                        isDisabled={isCheckingConn}>
+                        {isCheckingConn ? (
+                          <Spinner size="sm" />
+                        ) : (
+                          <Button.Label className="primary-text text-xs">
+                            {t('mcp.connectivity.test')}
+                          </Button.Label>
+                        )}
+                      </Button>
+                    </XStack>
+                  </Row>
+                )}
                 <Row>
                   <Text>{t('common.name')}</Text>
                   <Pressable onPress={() => handleEditField('name')} className="active:opacity-80">
@@ -273,7 +321,7 @@ export default function McpDetailScreen() {
             </YStack>
 
             {/* Group 2: Authentication - Only for HTTP type servers */}
-            {isHttpType && (
+            {isStreamableHttp && (
               <YStack className="gap-2">
                 <GroupTitle>{t('mcp.auth.title')}</GroupTitle>
                 <Group>

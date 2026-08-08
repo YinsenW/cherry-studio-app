@@ -430,6 +430,12 @@
         "inMemory": "內建",
         "sse": "伺服器傳送事件",
         "streamableHttp": "StreamableHTTP"
+      },
+      "connectivity": {
+        "status": "連線狀態",
+        "connected": "已連線",
+        "failed": "失敗",
+        "test": "測試連線"
       }
     },
     "menu": {

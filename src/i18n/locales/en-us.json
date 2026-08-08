@@ -430,6 +430,12 @@
         "inMemory": "built-in",
         "sse": "Server-Sent Events",
         "streamableHttp": "StreamableHTTP"
+      },
+      "connectivity": {
+        "status": "Connection",
+        "connected": "Connected",
+        "failed": "Failed",
+        "test": "Test"
       }
     },
     "menu": {
