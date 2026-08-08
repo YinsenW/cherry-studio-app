@@ -115,9 +115,9 @@ importers:
       '@mistralai/mistralai':
         specifier: ^1.7.4
         version: 1.11.0
-      '@modelcontextprotocol/client':
-        specifier: ^2.0.0
-        version: 2.0.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@3.25.76)
       '@openrouter/ai-sdk-provider':
         specifier: ^1.1.2
         version: 1.5.4(ai@5.0.117(zod@3.25.76))(zod@3.25.76)
@@ -638,12 +638,9 @@ importers:
 
   packages/react-native-streamable-http:
     dependencies:
-      '@modelcontextprotocol/client':
-        specifier: ^2.0.0
-        version: 2.0.0
-      '@modelcontextprotocol/core':
-        specifier: ^2.0.0
-        version: 2.0.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@3.25.76)
     devDependencies:
       tsx:
         specifier: ^4.20.5
@@ -2217,14 +2214,6 @@ packages:
 
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
-
-  '@modelcontextprotocol/client@2.0.0':
-    resolution: {integrity: sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==}
-    engines: {node: '>=20'}
-
-  '@modelcontextprotocol/core@2.0.0':
-    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
-    engines: {node: '>=20'}
 
   '@modelcontextprotocol/sdk@1.27.1':
     resolution: {integrity: sha512-sr6GbP+4edBwFndLbM60gf07z0FQ79gaExpnsjMGePXqFcSSb7t6iscpjk9DhFhwd+mTEQrzNafGP8/iGGFYaA==}
@@ -11076,7 +11065,6 @@ snapshots:
   '@hono/node-server@1.19.9(hono@4.12.3)':
     dependencies:
       hono: 4.12.3
-    optional: true
 
   '@humanfs/core@0.19.1': {}
 
@@ -11347,20 +11335,6 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
-  '@modelcontextprotocol/client@2.0.0':
-    dependencies:
-      '@modelcontextprotocol/core': 2.0.0
-      cross-spawn: 7.0.6
-      eventsource: 3.0.7
-      eventsource-parser: 3.0.6
-      jose: 6.1.3
-      pkce-challenge: 5.0.1
-      zod: 4.3.4
-
-  '@modelcontextprotocol/core@2.0.0':
-    dependencies:
-      zod: 4.3.4
-
   '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.9(hono@4.12.3)
@@ -11382,7 +11356,6 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   '@motionone/animation@10.18.0':
     dependencies:
@@ -13093,7 +13066,6 @@ snapshots:
     dependencies:
       mime-types: 3.0.2
       negotiator: 1.0.0
-    optional: true
 
   acorn-globals@7.0.1:
     dependencies:
@@ -13129,7 +13101,6 @@ snapshots:
   ajv-formats@3.0.1(ajv@8.17.1):
     optionalDependencies:
       ajv: 8.17.1
-    optional: true
 
   ajv@6.12.6:
     dependencies:
@@ -13476,7 +13447,6 @@ snapshots:
       type-is: 2.0.1
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   boolbase@1.0.0: {}
 
@@ -13749,8 +13719,7 @@ snapshots:
     dependencies:
       safe-buffer: 5.2.1
 
-  content-disposition@1.0.1:
-    optional: true
+  content-disposition@1.0.1: {}
 
   content-type@1.0.5: {}
 
@@ -13760,8 +13729,7 @@ snapshots:
 
   cookie-signature@1.0.7: {}
 
-  cookie-signature@1.2.2:
-    optional: true
+  cookie-signature@1.2.2: {}
 
   cookie@0.7.2: {}
 
@@ -13773,7 +13741,6 @@ snapshots:
     dependencies:
       object-assign: 4.1.1
       vary: 1.1.2
-    optional: true
 
   create-jest@29.7.0(@types/node@25.0.3):
     dependencies:
@@ -14837,7 +14804,6 @@ snapshots:
     dependencies:
       express: 5.2.1
       ip-address: 10.0.1
-    optional: true
 
   express@4.22.1:
     dependencies:
@@ -14907,7 +14873,6 @@ snapshots:
       vary: 1.1.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   extend@3.0.2: {}
 
@@ -15011,7 +14976,6 @@ snapshots:
       statuses: 2.0.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   find-babel-config@2.1.2:
     dependencies:
@@ -15088,8 +15052,7 @@ snapshots:
 
   fresh@0.5.2: {}
 
-  fresh@2.0.0:
-    optional: true
+  fresh@2.0.0: {}
 
   fs.realpath@1.0.0: {}
 
@@ -15316,8 +15279,7 @@ snapshots:
     dependencies:
       react-is: 16.13.1
 
-  hono@4.12.3:
-    optional: true
+  hono@4.12.3: {}
 
   hosted-git-info@7.0.2:
     dependencies:
@@ -15393,7 +15355,6 @@ snapshots:
   iconv-lite@0.7.1:
     dependencies:
       safer-buffer: 2.1.2
-    optional: true
 
   ieee754@1.2.1: {}
 
@@ -15446,8 +15407,7 @@ snapshots:
     dependencies:
       loose-envify: 1.4.0
 
-  ip-address@10.0.1:
-    optional: true
+  ip-address@10.0.1: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -15555,8 +15515,7 @@ snapshots:
 
   is-potential-custom-element-name@1.0.1: {}
 
-  is-promise@4.0.0:
-    optional: true
+  is-promise@4.0.0: {}
 
   is-regex@1.2.1:
     dependencies:
@@ -16123,8 +16082,7 @@ snapshots:
 
   json-schema-traverse@1.0.0: {}
 
-  json-schema-typed@8.0.2:
-    optional: true
+  json-schema-typed@8.0.2: {}
 
   json-schema@0.4.0: {}
 
@@ -16406,8 +16364,7 @@ snapshots:
 
   media-typer@0.3.0: {}
 
-  media-typer@1.1.0:
-    optional: true
+  media-typer@1.1.0: {}
 
   memoize-one@5.2.1: {}
 
@@ -16415,8 +16372,7 @@ snapshots:
 
   merge-descriptors@1.0.3: {}
 
-  merge-descriptors@2.0.0:
-    optional: true
+  merge-descriptors@2.0.0: {}
 
   merge-options@3.0.4:
     dependencies:
@@ -16694,7 +16650,6 @@ snapshots:
   mime-types@3.0.2:
     dependencies:
       mime-db: 1.54.0
-    optional: true
 
   mime@1.6.0: {}
 
@@ -16780,8 +16735,7 @@ snapshots:
 
   negotiator@0.6.4: {}
 
-  negotiator@1.0.0:
-    optional: true
+  negotiator@1.0.0: {}
 
   nested-error-stacks@2.0.1: {}
 
@@ -17037,8 +16991,7 @@ snapshots:
 
   path-to-regexp@0.1.12: {}
 
-  path-to-regexp@8.3.0:
-    optional: true
+  path-to-regexp@8.3.0: {}
 
   pathe@2.0.3: {}
 
@@ -17220,7 +17173,6 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.1
       unpipe: 1.0.0
-    optional: true
 
   rc@1.2.8:
     dependencies:
@@ -17805,7 +17757,6 @@ snapshots:
       path-to-regexp: 8.3.0
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   rtl-detect@1.1.2: {}
 
@@ -17881,7 +17832,6 @@ snapshots:
       statuses: 2.0.2
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   serialize-error@2.1.0: {}
 
@@ -17902,7 +17852,6 @@ snapshots:
       send: 1.2.1
     transitivePeerDependencies:
       - supports-color
-    optional: true
 
   server-only@0.0.1: {}
 
@@ -18397,7 +18346,6 @@ snapshots:
       content-type: 1.0.5
       media-typer: 1.1.0
       mime-types: 3.0.2
-    optional: true
 
   typebox@1.3.7: {}
 
