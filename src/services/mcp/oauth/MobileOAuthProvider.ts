@@ -1,19 +1,13 @@
 /**
  * MobileOAuthProvider - OAuth Client Provider for React Native
  *
- * Implements the OAuthClientProvider interface from @modelcontextprotocol/sdk
+ * Implements the OAuthClientProvider interface from @modelcontextprotocol/client
  * for mobile OAuth authentication using expo-web-browser and MMKV storage.
  *
  * This provider is designed to work with the forked @cherrystudio/react-native-streamable-http
  * transport that supports the authProvider option.
  */
-
-import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
-import type {
-  OAuthClientInformationFull,
-  OAuthClientMetadata,
-  OAuthTokens
-} from '@modelcontextprotocol/sdk/shared/auth.js'
+import type { OAuthClientProvider, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/client";
 import * as Crypto from 'expo-crypto'
 import * as WebBrowser from 'expo-web-browser'
 import { z } from 'zod'
