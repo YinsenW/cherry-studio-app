@@ -414,7 +414,55 @@
         "add": {
           "success": "已添加 {{mcp_name}}"
         },
-        "title": "MCP市場"
+        "already_added": "此 MCP 服務已新增。",
+        "builtin": "內建",
+        "configuration_required": "請填寫所有必填設定欄位。",
+        "deploy_and_add": "部署並新增",
+        "empty": "找不到 MCP 服務。請嘗試其他關鍵字。",
+        "errors": {
+          "AUTHENTICATION_REQUIRED": "需要市場存取憑證。請檢查令牌或 API Key 後再試。",
+          "CONFIGURATION_REQUIRED": "請填寫所有必填設定欄位。",
+          "DEPLOYMENT_AUTH_REQUIRED": "服務部署後仍需要額外登入授權，暫時無法自動新增至行動裝置。",
+          "INVALID_RESPONSE": "市場傳回無法識別的資料，請稍後再試。",
+          "NETWORK_ERROR": "無法連線至 MCP 市場，請檢查網路後再試。",
+          "NOT_MOBILE_COMPATIBLE": "此 MCP 不是可在行動裝置使用的遠端服務。",
+          "NO_REMOTE_ENDPOINT": "此服務沒有可用的遠端 HTTPS MCP 位址，暫時無法新增至行動裝置。",
+          "RATE_LIMITED": "市場請求過於頻繁，請稍後再試。",
+          "REQUEST_ABORTED": "請求已取消。",
+          "UNAUTHORIZED": "市場存取憑證無效或已過期。",
+          "UNKNOWN": "無法完成市場操作，請稍後再試。"
+        },
+        "install": "新增 MCP",
+        "install_confirm_description": "將「{{name}}」作為遠端 MCP 新增至應用程式。啟用後，助理可在你授權時呼叫其工具。",
+        "install_confirm_title": "新增遠端 MCP",
+        "load_more": "載入更多",
+        "loading_details": "正在檢查服務設定…",
+        "local_only": "此服務僅提供本機命令型（stdio）設定，手機無法執行。請選擇可部署的遠端 Streamable HTTP 服務。",
+        "modelscope": {
+          "configuration_title": "部署設定",
+          "confirm_description": "將為「{{name}}」在你的 ModelScope 帳戶中建立長期執行的遠端 MCP 部署。你可以隨時在 ModelScope 管理或停止此部署。",
+          "description": "可從中國大陸穩定存取的 MCP 廣場；選擇服務後可部署為手機可用的遠端 MCP。",
+          "name": "魔搭 MCP 廣場（中國）",
+          "tab": "魔搭（中國）",
+          "token_description": "令牌僅用於這次雲端部署，不會儲存到應用程式或寫入 MCP 設定。",
+          "token_label": "ModelScope 存取令牌",
+          "token_link": "取得令牌",
+          "token_placeholder": "貼上 ModelScope Access Token"
+        },
+        "open_details": "查看 {{name}} 的詳細資料",
+        "registry": {
+          "configuration_description": "設定值會儲存在此 MCP 的本機設定中，並只會傳送給對應的遠端服務。",
+          "configuration_title": "服務設定",
+          "description": "官方全球 MCP Registry；僅顯示可直接新增至行動裝置的遠端 Streamable HTTP 服務。",
+          "name": "Official MCP Registry（全球）",
+          "tab": "官方 Registry"
+        },
+        "retry": "重試",
+        "search_placeholder": "搜尋 MCP 服務…",
+        "security_checked": "已通過安全掃描",
+        "security_not_checked": "此服務未通過或未提供市場安全掃描結果。新增前請確認來源及所需權限。",
+        "title": "MCP市場",
+        "verified": "已驗證"
       },
       "server": {
         "add": "新增 MCP 伺服器",

@@ -1,6 +1,7 @@
 import React from 'react'
 
 import AssistantItemSheet from '@/componentsV2/features/Assistant/AssistantItemSheet'
+import MarketplaceServerSheet from '@/componentsV2/features/MCP/McpMarketplaceServerSheet'
 import McpServerItemSheet from '@/componentsV2/features/MCP/McpServerItemSheet'
 import { AddModelSheet } from '@/componentsV2/features/SettingsScreen/providers/AddModelSheet'
 import ExpandInputSheet from '@/componentsV2/features/Sheet/ExpandInputSheet'
@@ -35,6 +36,7 @@ const SheetManager: React.FC = () => {
   return (
     <>
       <AssistantItemSheet />
+      <MarketplaceServerSheet />
       <McpServerItemSheet />
       <TextEditSheet />
       <ModelSheet />

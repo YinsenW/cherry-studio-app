@@ -414,7 +414,55 @@
         "add": {
           "success": "已添加 {{mcp_name}}"
         },
-        "title": "MCP市场"
+        "already_added": "此 MCP 服务已添加。",
+        "builtin": "内置",
+        "configuration_required": "请填写所有必填配置项。",
+        "deploy_and_add": "部署并添加",
+        "empty": "没有找到 MCP 服务。换个关键词试试。",
+        "errors": {
+          "AUTHENTICATION_REQUIRED": "需要市场访问凭证。请检查令牌或 API Key 后重试。",
+          "CONFIGURATION_REQUIRED": "请填写所有必填配置项。",
+          "DEPLOYMENT_AUTH_REQUIRED": "服务部署后仍需要额外登录授权，暂时无法自动添加到移动端。",
+          "INVALID_RESPONSE": "市场返回了无法识别的数据，请稍后重试。",
+          "NETWORK_ERROR": "无法连接到 MCP 市场，请检查网络后重试。",
+          "NOT_MOBILE_COMPATIBLE": "这个 MCP 不是移动端可用的远程服务。",
+          "NO_REMOTE_ENDPOINT": "此服务没有可用的远程 HTTPS MCP 地址，暂时无法添加到移动端。",
+          "RATE_LIMITED": "市场请求过于频繁，请稍后重试。",
+          "REQUEST_ABORTED": "请求已取消。",
+          "UNAUTHORIZED": "市场访问凭证无效或已过期。",
+          "UNKNOWN": "无法完成市场操作，请稍后重试。"
+        },
+        "install": "添加 MCP",
+        "install_confirm_description": "将把“{{name}}”作为远程 MCP 添加到应用。启用后，助手可在你授权时调用它的工具。",
+        "install_confirm_title": "添加远程 MCP",
+        "load_more": "加载更多",
+        "loading_details": "正在检查服务配置…",
+        "local_only": "该服务只提供本地命令型（stdio）配置，手机无法运行。请选择可部署的远程 Streamable HTTP 服务。",
+        "modelscope": {
+          "configuration_title": "部署配置",
+          "confirm_description": "将为“{{name}}”在你的 ModelScope 账户中创建长期运行的远程 MCP 部署。你可以随时在 ModelScope 管理或停止该部署。",
+          "description": "中国大陆可稳定访问的 MCP 广场；选择服务后可部署为手机可用的远程 MCP。",
+          "name": "魔搭 MCP 广场（中国）",
+          "tab": "魔搭（中国）",
+          "token_description": "令牌仅用于本次云端部署，不会保存到应用或写入 MCP 配置。",
+          "token_label": "ModelScope 访问令牌",
+          "token_link": "获取令牌",
+          "token_placeholder": "粘贴 ModelScope Access Token"
+        },
+        "open_details": "查看 {{name}} 的详情",
+        "registry": {
+          "configuration_description": "配置值会保存在此 MCP 的本地配置中，并只会发送给对应的远程服务。",
+          "configuration_title": "服务配置",
+          "description": "官方全球 MCP Registry；仅展示可直接添加到手机端的远程 Streamable HTTP 服务。",
+          "name": "Official MCP Registry（全球）",
+          "tab": "官方 Registry"
+        },
+        "retry": "重试",
+        "search_placeholder": "搜索 MCP 服务…",
+        "security_checked": "已通过安全扫描",
+        "security_not_checked": "该服务未通过或未提供市场安全扫描结果。请确认来源和所需权限后再添加。",
+        "title": "MCP市场",
+        "verified": "已验证"
       },
       "server": {
         "add": "添加 MCP 服务器",

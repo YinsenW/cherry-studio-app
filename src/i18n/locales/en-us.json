@@ -414,7 +414,55 @@
         "add": {
           "success": "Added {{mcp_name}}"
         },
-        "title": "MCP Market"
+        "already_added": "This MCP server has already been added.",
+        "builtin": "Built-in",
+        "configuration_required": "Fill in every required configuration field.",
+        "deploy_and_add": "Deploy and Add",
+        "empty": "No MCP servers found. Try a different search.",
+        "errors": {
+          "AUTHENTICATION_REQUIRED": "Marketplace credentials are required. Check the token or API key and try again.",
+          "CONFIGURATION_REQUIRED": "Fill in every required configuration field.",
+          "DEPLOYMENT_AUTH_REQUIRED": "The deployed server needs an additional sign-in, so it cannot be added automatically on mobile.",
+          "INVALID_RESPONSE": "The marketplace returned unrecognized data. Try again later.",
+          "NETWORK_ERROR": "Could not connect to the MCP marketplace. Check your network and try again.",
+          "NOT_MOBILE_COMPATIBLE": "This MCP is not a remote service that can run on mobile.",
+          "NO_REMOTE_ENDPOINT": "This server has no usable remote HTTPS MCP endpoint and cannot be added on mobile yet.",
+          "RATE_LIMITED": "Too many marketplace requests. Try again later.",
+          "REQUEST_ABORTED": "The request was cancelled.",
+          "UNAUTHORIZED": "The marketplace credential is invalid or expired.",
+          "UNKNOWN": "Could not complete the marketplace operation. Try again later."
+        },
+        "install": "Add MCP",
+        "install_confirm_description": "Add \"{{name}}\" to the app as a remote MCP. Once enabled, your assistant can call its tools when you authorize it.",
+        "install_confirm_title": "Add Remote MCP",
+        "load_more": "Load More",
+        "loading_details": "Checking server configuration…",
+        "local_only": "This server only provides a local command (stdio) configuration, which cannot run on a phone. Choose a deployable remote Streamable HTTP server instead.",
+        "modelscope": {
+          "configuration_title": "Deployment Configuration",
+          "confirm_description": "A long-running remote MCP deployment for \"{{name}}\" will be created in your ModelScope account. You can manage or stop it in ModelScope at any time.",
+          "description": "An MCP marketplace with stable mainland China access. Selected servers can be deployed as remote MCPs for mobile.",
+          "name": "ModelScope MCP Plaza (China)",
+          "tab": "ModelScope (China)",
+          "token_description": "The token is used only for this cloud deployment. It is not saved in the app or written into the MCP configuration.",
+          "token_label": "ModelScope Access Token",
+          "token_link": "Get token",
+          "token_placeholder": "Paste a ModelScope Access Token"
+        },
+        "open_details": "View details for {{name}}",
+        "registry": {
+          "configuration_description": "Configuration values are saved in this MCP's local configuration and are only sent to its remote server.",
+          "configuration_title": "Server Configuration",
+          "description": "The official global MCP Registry. It lists only remote Streamable HTTP servers that can be added on mobile.",
+          "name": "Official MCP Registry (Global)",
+          "tab": "Official Registry"
+        },
+        "retry": "Retry",
+        "search_placeholder": "Search MCP servers…",
+        "security_checked": "Security scan passed",
+        "security_not_checked": "This server did not pass, or does not provide, a marketplace security scan result. Verify its source and required permissions before adding it.",
+        "title": "MCP Market",
+        "verified": "Verified"
       },
       "server": {
         "add": "Add MCP Server",

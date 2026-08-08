@@ -414,7 +414,55 @@
         "add": {
           "success": "{{mcp_name}} を追加しました"
         },
-        "title": "MCP市場"
+        "already_added": "この MCP サーバーはすでに追加されています。",
+        "builtin": "組み込み",
+        "configuration_required": "必須の設定項目をすべて入力してください。",
+        "deploy_and_add": "デプロイして追加",
+        "empty": "MCP サーバーが見つかりません。別のキーワードをお試しください。",
+        "errors": {
+          "AUTHENTICATION_REQUIRED": "マーケットプレイスの認証情報が必要です。トークンまたは API Key を確認して再試行してください。",
+          "CONFIGURATION_REQUIRED": "必須の設定項目をすべて入力してください。",
+          "DEPLOYMENT_AUTH_REQUIRED": "デプロイ済みサーバーには追加のサインインが必要なため、モバイルに自動追加できません。",
+          "INVALID_RESPONSE": "マーケットプレイスから認識できないデータが返されました。後でもう一度お試しください。",
+          "NETWORK_ERROR": "MCP マーケットプレイスに接続できません。ネットワークを確認して再試行してください。",
+          "NOT_MOBILE_COMPATIBLE": "この MCP はモバイルで利用できるリモートサービスではありません。",
+          "NO_REMOTE_ENDPOINT": "このサービスには使用可能なリモート HTTPS MCP エンドポイントがないため、モバイルには追加できません。",
+          "RATE_LIMITED": "マーケットプレイスへのリクエストが多すぎます。後でもう一度お試しください。",
+          "REQUEST_ABORTED": "リクエストはキャンセルされました。",
+          "UNAUTHORIZED": "マーケットプレイスの認証情報が無効か期限切れです。",
+          "UNKNOWN": "マーケットプレイスの操作を完了できませんでした。後でもう一度お試しください。"
+        },
+        "install": "MCP を追加",
+        "install_confirm_description": "「{{name}}」をリモート MCP としてアプリに追加します。有効にすると、許可した場合にアシスタントがそのツールを呼び出せます。",
+        "install_confirm_title": "リモート MCP を追加",
+        "load_more": "さらに読み込む",
+        "loading_details": "サーバー設定を確認中…",
+        "local_only": "このサーバーはローカルコマンド（stdio）設定のみを提供しており、スマートフォンでは実行できません。デプロイ可能なリモート Streamable HTTP サーバーを選択してください。",
+        "modelscope": {
+          "configuration_title": "デプロイ設定",
+          "confirm_description": "「{{name}}」の長期稼働リモート MCP デプロイが ModelScope アカウントに作成されます。いつでも ModelScope で管理または停止できます。",
+          "description": "中国本土から安定して利用できる MCP マーケットプレイスです。選択したサービスはモバイル向けリモート MCP としてデプロイできます。",
+          "name": "ModelScope MCP Plaza（中国）",
+          "tab": "ModelScope（中国）",
+          "token_description": "トークンは今回のクラウドデプロイにのみ使用され、アプリや MCP 設定には保存されません。",
+          "token_label": "ModelScope アクセストークン",
+          "token_link": "トークンを取得",
+          "token_placeholder": "ModelScope Access Token を貼り付け"
+        },
+        "open_details": "{{name}} の詳細を表示",
+        "registry": {
+          "configuration_description": "設定値はこの MCP のローカル設定に保存され、対応するリモートサーバーにのみ送信されます。",
+          "configuration_title": "サーバー設定",
+          "description": "公式グローバル MCP Registry。モバイルに追加できるリモート Streamable HTTP サーバーのみを表示します。",
+          "name": "Official MCP Registry（グローバル）",
+          "tab": "公式 Registry"
+        },
+        "retry": "再試行",
+        "search_placeholder": "MCP サーバーを検索…",
+        "security_checked": "セキュリティスキャン済み",
+        "security_not_checked": "このサーバーはマーケットプレイスのセキュリティスキャンに合格していないか、結果を提供していません。追加前にソースと必要な権限を確認してください。",
+        "title": "MCP市場",
+        "verified": "検証済み"
       },
       "server": {
         "add": "MCP サーバーを追加",
