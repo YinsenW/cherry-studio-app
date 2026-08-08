@@ -20,7 +20,8 @@
     "eas-build-pre-install": "corepack enable && corepack prepare pnpm@10.26.2 --activate",
     "eas-build-post-install": "pnpm --filter @cherrystudio/react-native-streamable-http run build",
     "analyze:ios": "source-map-explorer 'dist/_expo/static/js/ios/*.js' 'dist/_expo/static/js/ios/*.js.map'",
-    "analyze:android": "source-map-explorer 'dist/_expo/static/js/android/*.js' 'dist/_expo/static/js/android/*.js.map'"
+    "analyze:android": "source-map-explorer 'dist/_expo/static/js/android/*.js' 'dist/_expo/static/js/android/*.js.map'",
+    "postinstall": "pnpm --filter @cherrystudio/react-native-streamable-http run build"
   },
   "jest": {
     "preset": "jest-expo",
