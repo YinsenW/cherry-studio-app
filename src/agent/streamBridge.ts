@@ -7,34 +7,16 @@ import { fetch as expoFetch } from 'expo/fetch'
 import { createAiSdkProvider } from '@/aiCore/provider/factory'
 import { prepareSpecialProviderConfig, providerToAiSdkConfig } from '@/aiCore/provider/providerConfig'
 import { loggerService } from '@/services/LoggerService'
-import type { Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
+import type { StreamTextParams } from '@/types/aiCoretypes'
+import type { Assistant, Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
 
+import { getAgentErrorMessage, normalizeAgentError } from './agentError'
 import { piMessagesToAiSdkMessages } from './messageBridge'
 import { agentToolToAiSdkTool } from './toolAdapter'
 
 const logger = loggerService.withContext('streamBridge')
 const EMPTY_RESPONSE_ERROR_MESSAGE = 'The model provider returned an empty response.'
 type SuccessfulStopReason = Extract<AssistantMessage['stopReason'], 'stop' | 'length' | 'toolUse' | 'deferred'>
-
-function normalizeStreamError(error: unknown): Error {
-  if (error instanceof Error) {
-    return error
-  }
-
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    return new Error(String(error.message))
-  }
-
-  if (typeof error === 'string') {
-    return new Error(error)
-  }
-
-  try {
-    return new Error(JSON.stringify(error) || 'Unknown model provider error')
-  } catch {
-    return new Error(String(error))
-  }
-}
 
 function toPiStopReason(finishReason: string): SuccessfulStopReason {
   switch (finishReason) {
@@ -45,6 +27,18 @@ function toPiStopReason(finishReason: string): SuccessfulStopReason {
     default:
       return 'stop'
   }
+}
+
+type AgentRequestParamsBuilder = (
+  messages: ReturnType<typeof piMessagesToAiSdkMessages>,
+  assistant: Assistant,
+  provider: CherryProvider,
+  options: { requestOptions: { signal?: AbortSignal } }
+) => Promise<{ params: StreamTextParams }>
+
+const buildAgentRequestParams: AgentRequestParamsBuilder = async (...args) => {
+  const { buildStreamTextParams } = await import('@/aiCore/prepareParams')
+  return buildStreamTextParams(...args)
 }
 
 /**
@@ -58,7 +52,12 @@ function toPiStopReason(finishReason: string): SuccessfulStopReason {
  *
  * 按 StreamFn 契约不抛出异常：失败通过 error 事件编码。
  */
-export function createStreamFn(model: CherryModel, provider: CherryProvider): StreamFn {
+export function createStreamFn(
+  model: CherryModel,
+  provider: CherryProvider,
+  requestAssistant?: Assistant,
+  requestParamsBuilder: AgentRequestParamsBuilder = buildAgentRequestParams
+): StreamFn {
   return (piModel, context, options) => {
     const stream = createAssistantMessageEventStream()
 
@@ -110,8 +109,23 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
         const tools = context.tools?.length
           ? Object.fromEntries(context.tools.map(tool => [tool.name, agentToolToAiSdkTool(tool)]))
           : undefined
+        const requestParams = requestAssistant
+          ? (
+              await requestParamsBuilder(messages, requestAssistant, provider, {
+                requestOptions: { signal: options?.signal }
+              })
+            ).params
+          : { messages, abortSignal: options?.signal }
+        const {
+          prompt: _prompt,
+          system: _system,
+          messages: _messages,
+          tools: _tools,
+          ...sharedRequestParams
+        } = requestParams
 
         const result = await executor.streamText({
+          ...sharedRequestParams,
           model: aiModel,
           system: context.systemPrompt,
           messages,
@@ -156,7 +170,7 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
             }
             stopReason = toPiStopReason(chunk.finishReason)
           } else if (chunk.type === 'error') {
-            throw normalizeStreamError(chunk.error)
+            throw normalizeAgentError(chunk.error)
           } else if (chunk.type === 'abort') {
             abortedByStream = true
             throw new Error('Request was aborted.')
@@ -193,23 +207,22 @@ export function createStreamFn(model: CherryModel, provider: CherryProvider): St
         stream.end(finalMessage)
       } catch (error) {
         logger.error('streamBridge executor 调用失败:', error)
-        const aborted = abortedByStream || options?.signal?.aborted === true
-        // AI_APICallError 的 `message` 字段经常是空串（真实错误在 statusCode /
-        // responseBody 里）。若 errorMessage 为空，agentToChunk 会把失败回合
-        // 当成静默成功——正是"发消息没反应"的根因。从可用的字段里拼一个可读消息。
-        const errorMessageText = (() => {
-          if (aborted) return 'Request was aborted.'
-          const anyErr = error as Error & { statusCode?: number; responseBody?: string }
-          if (typeof anyErr.responseBody === 'string' && anyErr.responseBody) return anyErr.responseBody
-          if (typeof anyErr.statusCode === 'number') return `HTTP ${anyErr.statusCode}`
-          if (error instanceof Error && error.message) return error.message
-          return error ? String(error) : 'Unknown LLM error'
-        })()
-        const errorMessage: AssistantMessage = {
+        const errorLike =
+          typeof error === 'object' && error !== null ? (error as { name?: unknown; message?: unknown }) : undefined
+        const aborted =
+          abortedByStream ||
+          options?.signal?.aborted === true ||
+          errorLike?.name === 'AbortError' ||
+          errorLike?.message === 'Request was aborted.'
+        const normalizedError = normalizeAgentError(error)
+        const errorMessageText = aborted ? 'Request was aborted.' : getAgentErrorMessage(normalizedError)
+        const errorMessage: AssistantMessage & { statusCode?: number; responseBody?: string } = {
           ...buildPartial(aborted ? 'aborted' : 'error'),
           // Keep cancellation recognisable by the existing streaming callbacks,
           // which render it as a paused message instead of a failed message.
-          errorMessage: errorMessageText
+          errorMessage: errorMessageText,
+          ...(normalizedError.statusCode !== undefined ? { statusCode: normalizedError.statusCode } : {}),
+          ...(normalizedError.responseBody ? { responseBody: normalizedError.responseBody } : {})
         }
         stream.push({ type: 'error', reason: aborted ? 'aborted' : 'error', error: errorMessage })
         stream.end(errorMessage)

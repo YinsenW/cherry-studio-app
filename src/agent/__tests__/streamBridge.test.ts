@@ -1,6 +1,6 @@
 import { fetch as mockedExpoFetch } from 'expo/fetch'
 
-import type { Model, Provider } from '@/types/assistant'
+import type { Assistant, Model, Provider } from '@/types/assistant'
 
 import { createStreamFn } from '../streamBridge'
 
@@ -14,6 +14,7 @@ const mockEventStream = {
   end: (...args: unknown[]) => mockEnd(...args)
 }
 const mockExpoFetch = jest.fn()
+const mockBuildStreamTextParams = jest.fn()
 
 jest.mock('@cherrystudio/ai-core', () => ({
   createExecutor: (...args: unknown[]) => mockCreateExecutor(...args)
@@ -62,6 +63,7 @@ describe('createStreamFn simulated provider stream', () => {
     mockCreateExecutor.mockReturnValue({
       streamText: (...args: unknown[]) => mockStreamText(...args)
     })
+    mockBuildStreamTextParams.mockResolvedValue({ params: { messages: [] } })
   })
 
   it('adapts a simulated streaming provider response and injects Expo fetch for React Native', async () => {
@@ -112,6 +114,43 @@ describe('createStreamFn simulated provider stream', () => {
         type: 'error',
         reason: 'error',
         error: expect.objectContaining({ errorMessage: '模拟网络失败', stopReason: 'error' })
+      })
+    )
+  })
+
+  it('preserves abort semantics when the provider rejects with AbortError', async () => {
+    mockStreamText.mockRejectedValue(new DOMException('cancelled', 'AbortError'))
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        reason: 'aborted',
+        error: expect.objectContaining({ errorMessage: 'Request was aborted.', stopReason: 'aborted' })
+      })
+    )
+  })
+
+  it('preserves a provider status and readable response-body error', async () => {
+    const responseBody = JSON.stringify({ error: { message: 'Invalid API signature' } })
+    mockStreamText.mockRejectedValue({ statusCode: 401, responseBody })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        reason: 'error',
+        error: expect.objectContaining({
+          errorMessage: 'HTTP 401: Invalid API signature',
+          statusCode: 401,
+          responseBody
+        })
       })
     )
   })
@@ -183,5 +222,69 @@ describe('createStreamFn simulated provider stream', () => {
       })
     )
     expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+  })
+
+  it('treats a finishReason=error stream part as terminal failure', async () => {
+    async function* failingFinishStream() {
+      yield { type: 'finish', finishReason: 'error' }
+    }
+    mockStreamText.mockResolvedValue({ fullStream: failingFinishStream() })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        error: expect.objectContaining({
+          errorMessage: 'The model provider ended the stream with an error.',
+          stopReason: 'error'
+        })
+      })
+    )
+    expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+  })
+
+  it('reuses the normal chat request parameters when an assistant is provided', async () => {
+    async function* simulatedFullStream() {
+      yield { type: 'text-delta', text: 'ok' }
+    }
+    mockStreamText.mockResolvedValue({ fullStream: simulatedFullStream() })
+    mockBuildStreamTextParams.mockResolvedValue({
+      params: {
+        messages: [],
+        temperature: 0.25,
+        maxOutputTokens: 2048,
+        providerOptions: { mock: { mode: 'strict' } }
+      }
+    })
+    const assistant: Assistant = {
+      id: 'assistant-1',
+      name: 'Agent',
+      prompt: '',
+      type: 'system',
+      topics: [],
+      model
+    }
+
+    const streamFn = createStreamFn(model, provider, assistant, mockBuildStreamTextParams)
+    streamFn({} as never, { systemPrompt: 'agent system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockBuildStreamTextParams).toHaveBeenCalledWith(
+      [],
+      assistant,
+      provider,
+      expect.objectContaining({ requestOptions: { signal: undefined } })
+    )
+    expect(mockStreamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: 'agent system',
+        temperature: 0.25,
+        maxOutputTokens: 2048,
+        providerOptions: { mock: { mode: 'strict' } }
+      })
+    )
   })
 })

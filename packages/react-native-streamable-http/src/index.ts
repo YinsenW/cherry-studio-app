@@ -1,6 +1,6 @@
-import { JSONRPCMessageSchema } from "@modelcontextprotocol/core";
-import { isInitializedNotification } from "@modelcontextprotocol/client";
-import type { OAuthClientProvider, Transport, TransportSendOptions, JSONRPCMessage } from "@modelcontextprotocol/client";
+import type { JSONRPCMessage, OAuthClientProvider, Transport, TransportSendOptions } from '@modelcontextprotocol/client'
+import { isInitializedNotification } from '@modelcontextprotocol/client'
+import { JSONRPCMessageSchema } from '@modelcontextprotocol/core'
 
 // React Native compatible EventSource parser
 class RNEventSourceParser {

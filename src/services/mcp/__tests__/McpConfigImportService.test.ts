@@ -80,10 +80,10 @@ describe('parseMcpJsonConfig', () => {
   })
 
   it('accepts a bare array of remote server configurations', () => {
-    const result = parseMcpJsonConfig(
-      JSON.stringify([{ name: 'Array server', url: 'https://example.com/mcp' }]),
-      { idFactory: () => 'array-id', now: () => 42 }
-    )
+    const result = parseMcpJsonConfig(JSON.stringify([{ name: 'Array server', url: 'https://example.com/mcp' }]), {
+      idFactory: () => 'array-id',
+      now: () => 42
+    })
 
     expect(result).toEqual({
       success: true,
@@ -113,7 +113,11 @@ describe('parseMcpJsonConfig', () => {
       JSON.stringify({ mcpServers: { local: { command: 'npx', args: ['-y', 'local-mcp'] } } }),
       'UNSUPPORTED_STDIO'
     ],
-    ['SSE configuration', JSON.stringify({ mcpServers: { stream: { type: 'sse', url: 'https://example.com/sse' } } }), 'UNSUPPORTED_TRANSPORT']
+    [
+      'SSE configuration',
+      JSON.stringify({ mcpServers: { stream: { type: 'sse', url: 'https://example.com/sse' } } }),
+      'UNSUPPORTED_TRANSPORT'
+    ]
   ])('rejects %s', (_label, json, errorCode) => {
     const result = parseMcpJsonConfig(json, parserDependencies)
 

@@ -1,4 +1,4 @@
-import { generateText , tool } from 'ai'
+import { generateText, tool } from 'ai'
 import { z } from 'zod'
 
 import { createAiSdkProvider } from '@/aiCore/provider/factory'
@@ -84,11 +84,13 @@ export function createLlmTools(assistant: Assistant) {
   })
 
   const extractJson = tool({
-    description:
-      'Extract structured JSON from text or an unstructured description. Returns the extracted JSON object.',
+    description: 'Extract structured JSON from text or an unstructured description. Returns the extracted JSON object.',
     inputSchema: z.object({
       text: z.string().describe('The text to extract structured data from'),
-      schema: z.string().optional().describe('Optional description of the JSON shape wanted, e.g. "an array of {title, date}"')
+      schema: z
+        .string()
+        .optional()
+        .describe('Optional description of the JSON shape wanted, e.g. "an array of {title, date}"')
     }),
     execute: async ({ text, schema }) => {
       try {
@@ -97,7 +99,10 @@ export function createLlmTools(assistant: Assistant) {
           `Extract structured JSON from this text${schema ? ` with this shape: ${schema}` : ''}:\n\n${text}`
         )
         // 去掉可能的 ```json 围栏
-        const cleaned = json.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
+        const cleaned = json
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/, '')
+          .trim()
         const parsed = JSON.parse(cleaned)
         return { ok: true, result: JSON.stringify(parsed, null, 2) }
       } catch (e) {
@@ -111,7 +116,9 @@ export function createLlmTools(assistant: Assistant) {
     description:
       'Ask the model to analyze or reason about content (critique, pros/cons, decision support, proofread). For deep reasoning beyond the main turn.',
     inputSchema: z.object({
-      task: z.string().describe('What to analyze, e.g. "critique this plan", "proofread this text", "pros and cons of X"'),
+      task: z
+        .string()
+        .describe('What to analyze, e.g. "critique this plan", "proofread this text", "pros and cons of X"'),
       content: z.string().describe('The content to analyze')
     }),
     execute: async ({ task, content }) => {

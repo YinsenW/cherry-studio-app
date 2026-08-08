@@ -9,8 +9,7 @@ export const MCPConfigSampleSchema = z.object({
 })
 export type MCPConfigSample = z.infer<typeof MCPConfigSampleSchema>
 /** Normalize common Streamable HTTP transport spellings used by MCP exporters. */
-export const normalizeMcpServerType = (type: string) =>
-  type.toLowerCase().includes('http') ? 'streamableHttp' : type
+export const normalizeMcpServerType = (type: string) => (type.toLowerCase().includes('http') ? 'streamableHttp' : type)
 
 /**
  * 定义 MCP 服务器的通信类型。

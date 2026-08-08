@@ -53,18 +53,50 @@ export interface StreamProcessorCallbacks {
 export type StreamProcessor = ((chunk: Chunk) => Promise<void>) & {
   /** Wait until every previously queued chunk has been persisted. */
   drain: () => Promise<void>
+  /** Terminal result observed by the processor. Terminal results are immutable. */
+  getTerminalStatus: () => AssistantMessageStatus.SUCCESS | AssistantMessageStatus.ERROR | null
 }
 
 // Function to create a stream processor instance. Chunks frequently arrive faster
 // than SQLite updates complete, so serialise callbacks to preserve block order.
 export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}): StreamProcessor {
+  let terminalStatus: AssistantMessageStatus.SUCCESS | AssistantMessageStatus.ERROR | null = null
+
+  const reportError = async (error: unknown) => {
+    if (terminalStatus !== null) {
+      logger.debug('Ignoring error after stream reached a terminal state', { terminalStatus })
+      return
+    }
+
+    // Set the terminal state before invoking application code. Even when the
+    // error callback itself fails, a later BLOCK_COMPLETE must never turn the
+    // failed stream into a successful message.
+    terminalStatus = AssistantMessageStatus.ERROR
+    try {
+      await callbacks.onError?.(error)
+    } catch (onErrorFailure) {
+      logger.error('Error while reporting stream processing failure:', onErrorFailure)
+    }
+  }
+
   const processChunk = async (chunk: Chunk) => {
     try {
       const data = chunk
 
+      if (terminalStatus === AssistantMessageStatus.ERROR) {
+        logger.debug('Ignoring chunk after stream error', { type: data.type })
+        return
+      }
+
+      if (terminalStatus === AssistantMessageStatus.SUCCESS && data.type !== ChunkType.LLM_RESPONSE_COMPLETE) {
+        logger.debug('Ignoring chunk after successful stream completion', { type: data.type })
+        return
+      }
+
       switch (data.type) {
         case ChunkType.BLOCK_COMPLETE:
           await callbacks.onComplete?.(AssistantMessageStatus.SUCCESS, data.response)
+          terminalStatus = AssistantMessageStatus.SUCCESS
           break
 
         case ChunkType.LLM_RESPONSE_CREATED:
@@ -146,7 +178,7 @@ export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}):
           break
 
         case ChunkType.ERROR:
-          await callbacks.onError?.(data.error)
+          await reportError(data.error)
           break
 
         case ChunkType.BLOCK_CREATED:
@@ -158,11 +190,7 @@ export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}):
       }
     } catch (error) {
       logger.error('Error processing stream chunk:', error)
-      try {
-        await callbacks.onError?.(error)
-      } catch (onErrorFailure) {
-        logger.error('Error while reporting stream processing failure:', onErrorFailure)
-      }
+      await reportError(error)
     }
   }
 
@@ -172,11 +200,7 @@ export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}):
     // guard so an unforeseen rejected promise cannot poison the serial queue
     // and cause every later streamed chunk to be skipped.
     logger.error('Unexpected stream processing queue failure:', error)
-    try {
-      await callbacks.onError?.(error)
-    } catch (onErrorFailure) {
-      logger.error('Error while reporting queued stream processing failure:', onErrorFailure)
-    }
+    await reportError(error)
   }
 
   const streamProcessor = ((chunk: Chunk) => {
@@ -189,5 +213,6 @@ export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}):
   }) as StreamProcessor
 
   streamProcessor.drain = () => processing
+  streamProcessor.getTerminalStatus = () => terminalStatus
   return streamProcessor
 }

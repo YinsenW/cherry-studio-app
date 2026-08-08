@@ -83,23 +83,10 @@ const ErrorMessage: React.FC<{ block: ErrorMessageBlock }> = ({ block }) => {
     const providerId = block.error && 'providerId' in block.error ? block.error?.providerId : undefined
 
     if (providerId && typeof providerId === 'string') {
-      return (
-        <></>
-        // <Trans
-        //   i18nKey={i18nKey}
-        //   values={{ provider: getProviderLabel(providerId) }}
-        //   components={{
-        //     provider: (
-        //       <Link
-        //         style={{ color: 'var(--color-link)' }}
-        //         to={`/settings/provider`}
-        //         state={{ provider: getProviderById(providerId) }}
-        //       />
-        //     )
-        //   }}
-        // />
-      )
+      return t(i18nKey, { provider: providerId, defaultValue: block.error?.message || i18nKey })
     }
+
+    return t(i18nKey, { defaultValue: block.error?.message || i18nKey })
   }
 
   if (i18n.exists(errorKey)) {
@@ -108,9 +95,9 @@ const ErrorMessage: React.FC<{ block: ErrorMessageBlock }> = ({ block }) => {
 
   if (typeof errorStatus === 'number' && HTTP_ERROR_CODES.includes(errorStatus)) {
     return (
-      <h5>
+      <Text>
         {getHttpMessageLabel(errorStatus.toString())} {block.error?.message}
-      </h5>
+      </Text>
     )
   }
 
@@ -123,19 +110,6 @@ const MessageErrorInfo: React.FC<{ block: ErrorMessageBlock; message: Message; o
 }) => {
   const { t } = useTranslation()
 
-  const getAlertDescription = () => {
-    const status =
-      block.error && ('status' in block.error || 'statusCode' in block.error)
-        ? block.error?.status || block.error?.statusCode
-        : undefined
-
-    if (block.error && typeof status === 'number' && HTTP_ERROR_CODES.includes(status)) {
-      return getHttpMessageLabel(status.toString())
-    }
-
-    return <ErrorMessage block={block} />
-  }
-
   return (
     <Pressable
       className="rounded-lg  border border-red-600/20 bg-red-600/10 p-2"
@@ -143,7 +117,7 @@ const MessageErrorInfo: React.FC<{ block: ErrorMessageBlock; message: Message; o
       onPress={onShowDetail}>
       <XStack className="w-full items-center justify-between gap-2">
         <Text className="flex-1 text-red-600" numberOfLines={1}>
-          {getAlertDescription()}
+          <ErrorMessage block={block} />
         </Text>
         <Text className="text-sm text-red-600">{t('common.detail')}</Text>
       </XStack>

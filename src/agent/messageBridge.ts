@@ -28,7 +28,21 @@ export function piMessagesToAiSdkMessages(messages: PiMessage[]): ModelMessage[]
   for (const message of messages) {
     switch (message.role) {
       case 'user':
-        converted.push({ role: 'user', content: extractText(message) } as ModelMessage)
+        converted.push({
+          role: 'user',
+          content:
+            typeof message.content === 'string'
+              ? message.content
+              : message.content.map(part =>
+                  part.type === 'image'
+                    ? {
+                        type: 'image' as const,
+                        image: /^https?:\/\//.test(part.data) ? new URL(part.data) : part.data,
+                        mediaType: part.mimeType
+                      }
+                    : { type: 'text' as const, text: part.text }
+                )
+        } as ModelMessage)
         break
       case 'assistant': {
         const text = extractText(message)

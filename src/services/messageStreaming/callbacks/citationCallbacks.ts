@@ -88,7 +88,12 @@ export const createCitationCallbacks = (deps: CitationCallbacksDependencies) => 
           const mainTextChanges = {
             citationReferences: [...currentRefs, { blockId, citationBlockSource: llmWebSearchResult.source }]
           }
-          await blockManager.smartBlockUpdate(existingMainTextBlock.id, mainTextChanges, MessageBlockType.MAIN_TEXT, true)
+          await blockManager.smartBlockUpdate(
+            existingMainTextBlock.id,
+            mainTextChanges,
+            MessageBlockType.MAIN_TEXT,
+            true
+          )
         }
 
         if (blockManager.hasInitialPlaceholder) {
@@ -123,7 +128,12 @@ export const createCitationCallbacks = (deps: CitationCallbacksDependencies) => 
           const mainTextChanges = {
             citationReferences: [...currentRefs, { citationBlockId, citationBlockSource: llmWebSearchResult.source }]
           }
-          await blockManager.smartBlockUpdate(existingMainTextBlock.id, mainTextChanges, MessageBlockType.MAIN_TEXT, true)
+          await blockManager.smartBlockUpdate(
+            existingMainTextBlock.id,
+            mainTextChanges,
+            MessageBlockType.MAIN_TEXT,
+            true
+          )
         }
 
         await blockManager.handleBlockTransition(citationBlock, MessageBlockType.CITATION)

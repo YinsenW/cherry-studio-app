@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 
+import { registerMcpAgentToolName } from '@/agent/mcpToolNames'
 import { fetchAssistantMcpTools } from '@/services/ApiService'
 import { loggerService } from '@/services/LoggerService'
 import { mcpClientService } from '@/services/mcp/McpClientService'
@@ -33,17 +34,22 @@ export async function createMcpTools(assistant: Assistant): Promise<AgentTool[]>
       if (server.type !== 'streamableHttp') continue
 
       tools.push({
-        name: mcpTool.id,
+        name: registerMcpAgentToolName({
+          serverId: server.id,
+          serverName: server.name,
+          toolName: mcpTool.name
+        }),
         label: `${server.name} · ${mcpTool.name}`,
         description: mcpTool.description ?? mcpTool.name,
         parameters: (mcpTool.inputSchema ?? { type: 'object', properties: {} }) as AgentTool['parameters'],
         execute: async (callId, args, _signal, _onUpdate) => {
           const resp = await mcpClientService.callTool(server, mcpTool.name, args as Record<string, unknown>)
           const text = Array.isArray(resp.content)
-            ? resp.content
-                .map(c => ('text' in c ? String(c.text) : JSON.stringify(c)))
-                .join('\n')
+            ? resp.content.map(c => ('text' in c ? String(c.text) : JSON.stringify(c))).join('\n')
             : JSON.stringify(resp)
+          if (resp.isError) {
+            throw new Error(text || 'MCP tool execution failed.')
+          }
           return {
             content: [{ type: 'text', text: text || (resp.isError ? 'Tool error' : 'OK') }],
             details: { isError: resp.isError }

@@ -5,6 +5,9 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -15,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PRCI: true
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
     steps:
       - name: Check out Git repository
@@ -50,19 +53,21 @@ jobs:
         run: pnpm -r run build
 
       - name: Lint Check
-        run: pnpm lint
+        run: pnpm lint:check
 
       - name: Format Check
-        run: pnpm format
+        run: pnpm format:check
 
       - name: Type Check
         run: pnpm typecheck
-
-      - name: i18n Sync
-        run: pnpm sync:i18n
 
       - name: i18n Check
         run: pnpm check:i18n
 
       - name: Test
         run: pnpm test:ci
+
+      - name: Verify Android production bundle
+        env:
+          EXPO_NO_TELEMETRY: 1
+        run: pnpm exec expo export --platform android --output-dir /tmp/cherry-android-export

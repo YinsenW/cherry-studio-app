@@ -8,13 +8,13 @@ The [@earendil-works/pi-agent-core](https://www.npmjs.com/package/@earendil-work
 
 This repository wires that runtime into Cherry's existing stack:
 
-| Concern | Implementation |
-| --- | --- |
-| Agent runtime | `@earendil-works/pi-agent-core` (`src/agent/AgentService.ts`) |
-| Model transport | `src/agent/streamBridge.ts` — implements pi's `StreamFn` on top of Cherry's AI SDK providers (`providerToAiSdkConfig` + `createAiSdkProvider` + `streamText`) |
-| Device tools | `src/agent/toolAdapter.ts` — adapts Cherry's existing `SystemTool` set (reminders, calendar, time, fetch, shortcuts) into pi `AgentTool`s |
-| Message protocol | `src/agent/messageBridge.ts` — converts pi `AgentMessage` ↔ AI SDK `ModelMessage` |
-| UI | `src/agent/usePiAgent.ts` + `src/screens/agent/AgentScreen.tsx` — streams agent events (text deltas + tool execution traces) into the chat UI |
+| Concern          | Implementation                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent runtime    | `@earendil-works/pi-agent-core` (`src/agent/AgentService.ts`)                                                                                                 |
+| Model transport  | `src/agent/streamBridge.ts` — implements pi's `StreamFn` on top of Cherry's AI SDK providers (`providerToAiSdkConfig` + `createAiSdkProvider` + `streamText`) |
+| Device tools     | `src/agent/toolAdapter.ts` — adapts Cherry's existing `SystemTool` set (reminders, calendar, time, fetch, shortcuts) into pi `AgentTool`s                     |
+| Message protocol | `src/agent/messageBridge.ts` — converts pi `AgentMessage` ↔ AI SDK `ModelMessage`                                                                             |
+| UI               | `src/agent/usePiAgent.ts` + `src/screens/agent/AgentScreen.tsx` — streams agent events (text deltas + tool execution traces) into the chat UI                 |
 
 The agent entry lives in the drawer (Sparkles icon). Pick a function-calling model and start describing tasks.
 

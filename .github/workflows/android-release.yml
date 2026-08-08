@@ -48,6 +48,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify source and main flows
+        run: |
+          pnpm typecheck
+          pnpm test:ci
+
+      - name: Verify Android production bundle
+        env:
+          EXPO_NO_TELEMETRY: 1
+        run: pnpm exec expo export --platform android --output-dir /tmp/cherry-android-export
+
       # Step 6: Get version tag
       - name: Get version tag
         id: version

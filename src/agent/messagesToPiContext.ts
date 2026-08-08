@@ -1,8 +1,82 @@
-import type { AssistantMessage, Message as PiMessage } from '@earendil-works/pi-ai'
+import type {
+  AssistantMessage,
+  ImageContent,
+  Message as PiMessage,
+  TextContent,
+  UserMessage
+} from '@earendil-works/pi-ai'
+import { File } from 'expo-file-system'
 
+import { convertFileBlockToTextPart } from '@/aiCore/prepareParams/fileProcessor'
+import { isVisionModel } from '@/config/models'
+import { loggerService } from '@/services/LoggerService'
+import type { Model } from '@/types/assistant'
 import type { Message, ToolMessageBlock } from '@/types/message'
 import { AssistantMessageStatus, MessageBlockType } from '@/types/message'
-import { findAllBlocks, getMainTextContent } from '@/utils/messageUtils/find'
+import { findAllBlocks, findFileBlocks, findImageBlocks, getMainTextContent } from '@/utils/messageUtils/find'
+
+const logger = loggerService.withContext('messagesToPiContext')
+
+export async function messageToPiUserMessage(message: Message, model: Model): Promise<UserMessage> {
+  const textParts: string[] = []
+  const content: (TextContent | ImageContent)[] = []
+  const mainText = await getMainTextContent(message)
+  if (mainText.trim()) {
+    textParts.push(mainText)
+  }
+
+  for (const fileBlock of await findFileBlocks(message)) {
+    const textPart = await convertFileBlockToTextPart(fileBlock)
+    if (textPart?.text.trim()) {
+      textParts.push(textPart.text)
+    } else {
+      textParts.push(
+        `[Attached file: ${fileBlock.file.origin_name}. Its contents could not be extracted on this device.]`
+      )
+    }
+  }
+
+  if (textParts.length > 0) {
+    content.push({ type: 'text', text: textParts.join('\n\n') })
+  }
+
+  const imageBlocks = await findImageBlocks(message)
+  if (imageBlocks.length > 0 && !isVisionModel(model)) {
+    content.push({
+      type: 'text',
+      text: `[${imageBlocks.length} attached image(s) were not included because the selected model does not support image input.]`
+    })
+  } else {
+    for (const imageBlock of imageBlocks) {
+      try {
+        if (imageBlock.file) {
+          const image = new File(imageBlock.file.path)
+          content.push({
+            type: 'image',
+            data: await image.base64(),
+            mimeType: image.type || 'image/jpeg'
+          })
+        } else if (imageBlock.url) {
+          const dataUrlMatch = /^data:([^;]+);base64,(.+)$/.exec(imageBlock.url)
+          content.push({
+            type: 'image',
+            data: dataUrlMatch?.[2] ?? imageBlock.url,
+            mimeType: dataUrlMatch?.[1] ?? 'image/jpeg'
+          })
+        }
+      } catch (error) {
+        logger.warn('Failed to load an image for the agent prompt:', error as Error)
+        content.push({ type: 'text', text: '[An attached image could not be read on this device.]' })
+      }
+    }
+  }
+
+  return {
+    role: 'user',
+    content,
+    timestamp: message.createdAt
+  }
+}
 
 /**
  * 把当前 topic 的历史消息转换为 pi-agent 的上下文消息。
@@ -33,20 +107,16 @@ async function getToolSummary(message: Message): Promise<string[]> {
   return parts
 }
 
-export async function messagesToPiContext(
-  messages: Message[],
-  modelId: string,
-  providerId: string
-): Promise<PiMessage[]> {
+export async function messagesToPiContext(messages: Message[], model: Model): Promise<PiMessage[]> {
   const pi: PiMessage[] = []
 
   for (const msg of messages) {
     if (!msg.blocks?.length) continue
 
     if (msg.role === 'user') {
-      const text = await getMainTextContent(msg)
-      if (text) {
-        pi.push({ role: 'user', content: text, timestamp: msg.createdAt } as PiMessage)
+      const userMessage = await messageToPiUserMessage(msg, model)
+      if (userMessage.content.length > 0) {
+        pi.push(userMessage)
       }
       continue
     }
@@ -67,8 +137,8 @@ export async function messagesToPiContext(
         role: 'assistant',
         content,
         api: 'custom',
-        provider: providerId,
-        model: modelId,
+        provider: model.provider,
+        model: model.id,
         usage: {
           input: 0,
           output: 0,

@@ -1,17 +1,12 @@
 import { messageDatabase } from '@database'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import type { Tool } from 'ai'
 
-import { OAuthTool } from '@/agent/oauth/oauthTools'
 import { getActualProvider } from '@/aiCore/provider/providerConfig'
-import { SystemTool } from '@/aiCore/tools/SystemTools'
-import { AndroidTool } from '@/aiCore/tools/SystemTools/AndroidTools'
-import { ApiTool } from '@/aiCore/tools/SystemTools/ApiTools'
-import { ComputeTool } from '@/aiCore/tools/SystemTools/ComputeTools'
-import { FeishuTool } from '@/aiCore/tools/SystemTools/FeishuTools'
-import { GithubTool } from '@/aiCore/tools/SystemTools/GithubTools'
-import { createLlmTools } from '@/aiCore/tools/SystemTools/LlmTools'
+import { isFunctionCallingModel } from '@/config/models'
 import { fetchTopicNaming } from '@/services/ApiService'
-import { getAssistantModel } from '@/services/AssistantService'
+import { getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
+import { ConversationService } from '@/services/ConversationService'
 import { loggerService } from '@/services/LoggerService'
 import {
   cancelThrottledBlockUpdate,
@@ -28,19 +23,43 @@ import { topicService } from '@/services/TopicService'
 import type { Assistant, Topic } from '@/types/assistant'
 import { ChunkType } from '@/types/chunk'
 import type { Message, MessageBlock } from '@/types/message'
-import { AssistantMessageStatus } from '@/types/message'
+import { AssistantMessageStatus, MessageBlockType } from '@/types/message'
 import { addAbortController, removeAbortController } from '@/utils/abortController'
-import { createAssistantMessage, resetAssistantMessage } from '@/utils/messageUtils/create'
-import { getMainTextContent } from '@/utils/messageUtils/find'
+import { isAbortError, serializeError } from '@/utils/error'
+import { createAssistantMessage, createErrorBlock, resetAssistantMessage } from '@/utils/messageUtils/create'
+import { findAllBlocks } from '@/utils/messageUtils/find'
 
 import { AgentService } from './AgentService'
 import { createAgentEventToChunk } from './agentToChunk'
-import { messagesToPiContext } from './messagesToPiContext'
+import { messagesToPiContext, messageToPiUserMessage } from './messagesToPiContext'
 import { aiSdkToolToAgentTool } from './toolAdapter'
 
 const logger = loggerService.withContext('sendAgentMessage')
 
 const AGENT_TIMEOUT_MS = 120_000
+const AGENT_PROTOCOL_ERROR_MESSAGE = 'The agent session ended without a terminal event.'
+
+async function persistFallbackAgentError(assistantMessage: Message, topicId: Topic['id'], error: Error): Promise<void> {
+  const existingMessage = await messageDatabase.getMessageById(assistantMessage.id)
+  if (!existingMessage) {
+    throw new Error(`Unable to persist agent error because assistant message ${assistantMessage.id} was not found.`, {
+      cause: error
+    })
+  }
+
+  const existingBlocks = await findAllBlocks(existingMessage)
+  const hasErrorBlock = existingBlocks.some(block => block.type === MessageBlockType.ERROR)
+  const errorBlock = hasErrorBlock ? null : createErrorBlock(assistantMessage.id, serializeError(error as never))
+  const status = isAbortError(error) ? AssistantMessageStatus.PAUSED : AssistantMessageStatus.ERROR
+  const updatedMessage: Message = {
+    ...existingMessage,
+    status,
+    updatedAt: Date.now(),
+    blocks: errorBlock ? [...existingMessage.blocks, errorBlock.id] : existingMessage.blocks
+  }
+
+  await saveMessageAndBlocksToDB(updatedMessage, errorBlock ? [errorBlock] : [])
+}
 
 /**
  * Normal chat requests fall back to the app default model when an assistant
@@ -78,6 +97,71 @@ async function loadMcpAgentTools(assistant: Assistant): Promise<AgentTool[]> {
   }
 }
 
+type AiToolRecord = Partial<Record<string, Tool>>
+
+async function loadAiToolRecord(label: string, loader: () => Promise<AiToolRecord>): Promise<AiToolRecord> {
+  try {
+    return await loader()
+  } catch (error) {
+    logger.warn(`Agent will continue without ${label} tools because their module failed to load:`, error as Error)
+    return {}
+  }
+}
+
+function validateAgentTools(tools: AgentTool[]): AgentTool[] {
+  const accepted: AgentTool[] = []
+  const names = new Set<string>()
+
+  for (const tool of tools) {
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tool.name)) {
+      logger.warn(`Skipping agent tool with provider-incompatible name: ${tool.name}`)
+      continue
+    }
+    if (names.has(tool.name)) {
+      logger.warn(`Skipping duplicate agent tool name: ${tool.name}`)
+      continue
+    }
+    names.add(tool.name)
+    accepted.push(tool)
+  }
+
+  return accepted
+}
+
+async function loadAgentTools(assistant: Assistant): Promise<AgentTool[]> {
+  const model = getAssistantModel(assistant)
+  if (!model || assistant.settings?.toolUseMode !== 'function' || !isFunctionCallingModel(model)) {
+    return []
+  }
+
+  const records = await Promise.all([
+    loadAiToolRecord('system', async () => (await import('@/aiCore/tools/SystemTools')).SystemTool),
+    loadAiToolRecord('Android', async () => (await import('@/aiCore/tools/SystemTools/AndroidTools')).AndroidTool),
+    loadAiToolRecord('compute', async () => (await import('@/aiCore/tools/SystemTools/ComputeTools')).ComputeTool),
+    loadAiToolRecord('API', async () => (await import('@/aiCore/tools/SystemTools/ApiTools')).ApiTool),
+    loadAiToolRecord('Feishu', async () => (await import('@/aiCore/tools/SystemTools/FeishuTools')).FeishuTool),
+    loadAiToolRecord('GitHub', async () => (await import('@/aiCore/tools/SystemTools/GithubTools')).GithubTool),
+    loadAiToolRecord('OAuth', async () => (await import('@/agent/oauth/oauthTools')).OAuthTool),
+    loadAiToolRecord('LLM subtask', async () =>
+      (await import('@/aiCore/tools/SystemTools/LlmTools')).createLlmTools(assistant)
+    )
+  ])
+
+  const builtInTools: AgentTool[] = []
+  for (const record of records) {
+    for (const [name, tool] of Object.entries(record)) {
+      if (!tool) continue
+      try {
+        builtInTools.push(aiSdkToolToAgentTool(name, tool))
+      } catch (error) {
+        logger.warn(`Skipping agent tool ${name} because its schema could not be converted:`, error as Error)
+      }
+    }
+  }
+
+  return validateAgentTools([...builtInTools, ...(await loadMcpAgentTools(assistant))])
+}
+
 /**
  * 执行一次 agent 会话，把 pi 事件流转换为现有块流并落库。
  *
@@ -100,8 +184,6 @@ export async function runAgentSession(
   const resolvedAssistant = resolveAgentAssistant(assistant)
 
   try {
-    await topicService.updateTopic(topicId, { isLoading: true })
-
     // 1. 复用现有块流回调（文本块 / 工具块 / 错误块渲染与落库）
     const blockManager = new BlockManager({
       saveUpdatedBlockToDB,
@@ -121,52 +203,51 @@ export async function runAgentSession(
     })
     streamProcessor = createStreamProcessor(callbacks)
     const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) => streamProcessor!(chunk)
+    await topicService.updateTopic(topicId, { isLoading: true })
 
     // 2. 读取历史并转换为 pi 上下文。本次用户消息会由 prompt()
     // 注入，所以和 assistant 占位消息一起排除，避免同一条问题发送两次。
     const allMessages = await messageDatabase.getMessagesByTopicId(topicId)
+    const { contextCount } = getAssistantSettings(resolvedAssistant)
+    const filteredMessages = ConversationService.filterMessagesPipeline(
+      allMessages.filter(message => message.id !== assistantMessage.id),
+      contextCount
+    )
     const contextMessages = await messagesToPiContext(
-      allMessages.filter(m => m.id !== assistantMessage.id && m.id !== userMessage.id),
-      resolvedAssistant.model!.id,
-      resolvedAssistant.model!.provider
+      filteredMessages.filter(message => message.id !== userMessage.id),
+      resolvedAssistant.model!
     )
 
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    const mcpTools = await loadMcpAgentTools(resolvedAssistant)
-    const tools = [
-      ...Object.entries(SystemTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(AndroidTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(ComputeTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(ApiTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(FeishuTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(GithubTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(OAuthTool).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...Object.entries(createLlmTools(resolvedAssistant)).map(([name, tool]) => aiSdkToolToAgentTool(name, tool)),
-      ...mcpTools
-    ]
+    const tools = await loadAgentTools(resolvedAssistant)
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,
       tools,
       resolvedAssistant.prompt || undefined,
-      contextMessages as never[]
+      contextMessages as never[],
+      resolvedAssistant
     )
 
     // 4. 事件 → chunk → 现有块流
-    unsubscribeAgentEvents = agentService.subscribe(createAgentEventToChunk(processChunk))
+    const eventAdapter = createAgentEventToChunk(processChunk)
+    unsubscribeAgentEvents = agentService.subscribe(eventAdapter)
 
     // 5. 中止：绑定到现有「暂停/停止」机制
     abortAgent = () => agentService.abort()
     addAbortController(userMessage.id, abortAgent)
 
-    const userText = await getMainTextContent(userMessage)
+    const userPrompt = await messageToPiUserMessage(userMessage, resolvedAssistant.model!)
+    if (userPrompt.content.length === 0) {
+      throw new Error('The message did not contain any text or supported attachment content.')
+    }
 
     // 6. 超时兜底：普通聊天路径有 timeout:30000，agent 可能多轮，给 120s。
     // 否则网络卡住时 prompt 永不返回 → 一直转圈。
     await Promise.race([
-      agentService.prompt(userText || ''),
+      agentService.prompt(userPrompt),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           agentService.abort()
@@ -175,17 +256,30 @@ export async function runAgentSession(
       })
     ])
 
-    // pi normally emits agent_end, but do not leave a message stuck in a
-    // loading state if a provider completes without a terminal UI event.
-    const finalAssistantMessage = await messageDatabase.getMessageById(assistantMessage.id)
-    if (
-      finalAssistantMessage &&
-      (finalAssistantMessage.status === AssistantMessageStatus.PENDING ||
-        finalAssistantMessage.status === AssistantMessageStatus.PROCESSING)
-    ) {
-      await streamProcessor({ type: ChunkType.BLOCK_COMPLETE })
-    }
     await streamProcessor.drain()
+
+    // prompt() is expected to settle only after the awaited agent_end listener.
+    // Treat a missing protocol terminal as an error; never synthesize success
+    // from an absence of events.
+    if (!eventAdapter.getState().agentEnded || streamProcessor.getTerminalStatus() === null) {
+      const protocolError = new Error(AGENT_PROTOCOL_ERROR_MESSAGE) as Error & { code: string }
+      protocolError.code = 'AGENT_PROTOCOL_INCOMPLETE'
+      await streamProcessor({ type: ChunkType.ERROR, error: protocolError })
+      await streamProcessor.drain()
+    }
+
+    const persistedMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    if (
+      !persistedMessage ||
+      persistedMessage.status === AssistantMessageStatus.PENDING ||
+      persistedMessage.status === AssistantMessageStatus.PROCESSING
+    ) {
+      await persistFallbackAgentError(
+        assistantMessage,
+        topicId,
+        new Error('The agent session finished without persisting a terminal message state.')
+      )
+    }
   } catch (error) {
     logger.error('Error in agent session:', error as Error)
     // 让错误在聊天 UI 可见（不再静默无响应）
@@ -195,6 +289,15 @@ export async function runAgentSession(
       error: sessionError
     })
     await streamProcessor?.drain()
+
+    const persistedMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    if (
+      !persistedMessage ||
+      persistedMessage.status === AssistantMessageStatus.PENDING ||
+      persistedMessage.status === AssistantMessageStatus.PROCESSING
+    ) {
+      await persistFallbackAgentError(assistantMessage, topicId, sessionError)
+    }
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId)
@@ -231,8 +334,7 @@ export async function sendAgentMessage(
   topicId: Topic['id']
 ) {
   if (userMessage.blocks.length === 0) {
-    logger.warn('sendAgentMessage: No blocks in the provided message.')
-    return
+    throw new Error('Cannot send an agent message without text or attachment blocks.')
   }
 
   await saveMessageAndBlocksToDB(userMessage, userMessageBlocks)
@@ -263,15 +365,13 @@ export async function regenerateAgentMessage(assistantMessage: Message, assistan
     const allMessagesForTopic = await messageDatabase.getMessagesByTopicId(topicId)
     const originalUserQuery = allMessagesForTopic.find(m => m.id === assistantMessage.askId)
     if (!originalUserQuery) {
-      logger.error(`[regenerateAgentMessage] Original user query ${assistantMessage.askId} not found.`)
-      return
+      throw new Error(`[regenerateAgentMessage] Original user query ${assistantMessage.askId} not found.`)
     }
 
     // 2. 重置 assistant 消息（清空块 + 状态置 PENDING）
     const messageToReset = await messageDatabase.getMessageById(assistantMessage.id)
     if (!messageToReset) {
-      logger.error(`[regenerateAgentMessage] Assistant message ${assistantMessage.id} not found.`)
-      return
+      throw new Error(`[regenerateAgentMessage] Assistant message ${assistantMessage.id} not found.`)
     }
     const blockIdsToDelete = [...(messageToReset.blocks || [])]
     const resetMsg = resetAssistantMessage(messageToReset, {

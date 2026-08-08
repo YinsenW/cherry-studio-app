@@ -14,7 +14,8 @@ import { useTheme } from '@/hooks/useTheme'
 import {
   type McpJsonImportError,
   type McpJsonImportResult,
-  parseMcpJsonConfig} from '@/services/mcp/McpConfigImportService'
+  parseMcpJsonConfig
+} from '@/services/mcp/McpConfigImportService'
 import type { MCPServer } from '@/types/mcp'
 import { isIOS26 } from '@/utils/device'
 

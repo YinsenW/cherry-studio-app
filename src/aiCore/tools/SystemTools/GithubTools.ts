@@ -18,7 +18,11 @@ async function ghGet(path: string, token?: string): Promise<any> {
   const effective = token ?? getGithubAccessToken()
   if (!effective) throw new Error('GitHub 未授权：请先调用 authorizeGithub 完成授权')
   const resp = await fetch(`${GH_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${effective}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }
+    headers: {
+      Authorization: `Bearer ${effective}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    }
   })
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
@@ -48,7 +52,8 @@ async function ghPost(path: string, token: string | undefined, body: any): Promi
 }
 
 export const ghGetUser = tool({
-  description: '获取当前 GitHub 账号信息（登录名、名字、公开仓库数、粉丝等）。需要用户提供 GitHub Personal Access Token。',
+  description:
+    '获取当前 GitHub 账号信息（登录名、名字、公开仓库数、粉丝等）。需要用户提供 GitHub Personal Access Token。',
   inputSchema: z.object({
     token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）')
   }),
@@ -78,7 +83,9 @@ export const ghListRepos = tool({
   execute: async ({ token, query, sort, perPage }) => {
     const params = new URLSearchParams({ sort: sort ?? 'updated', per_page: String(perPage ?? 20) })
     const repos = await ghGet(`/user/repos?${params}`, token)
-    const filtered = query ? repos.filter((r: any) => (r.full_name ?? '').toLowerCase().includes(query.toLowerCase())) : repos
+    const filtered = query
+      ? repos.filter((r: any) => (r.full_name ?? '').toLowerCase().includes(query.toLowerCase()))
+      : repos
     return {
       ok: true,
       repos: filtered.map((r: any) => ({
@@ -151,7 +158,10 @@ export const ghListIssues = tool({
     perPage: z.number().optional().default(20).describe('每页数量')
   }),
   execute: async ({ token, owner, repo, state, perPage }) => {
-    const issues = await ghGet(`/repos/${owner}/${repo}/issues?state=${state ?? 'open'}&per_page=${perPage ?? 20}`, token)
+    const issues = await ghGet(
+      `/repos/${owner}/${repo}/issues?state=${state ?? 'open'}&per_page=${perPage ?? 20}`,
+      token
+    )
     return {
       ok: true,
       issues: issues
@@ -318,12 +328,20 @@ export const ghListIssuesAssigned = tool({
   description: '列出分配给当前用户的 issue（跨仓库，相当于 GitHub 的 Assigned 视图）。',
   inputSchema: z.object({
     token: z.string().optional().describe('GitHub Personal Access Token（已 OAuth 授权可省略）'),
-    filter: z.enum(['assigned', 'created', 'mentioned', 'subscribed']).optional().default('assigned').describe('过滤维度'),
+    filter: z
+      .enum(['assigned', 'created', 'mentioned', 'subscribed'])
+      .optional()
+      .default('assigned')
+      .describe('过滤维度'),
     state: z.enum(['open', 'closed', 'all']).optional().default('open').describe('issue 状态'),
     perPage: z.number().optional().default(20).describe('每页数量')
   }),
   execute: async ({ token, filter, state, perPage }) => {
-    const params = new URLSearchParams({ filter: filter ?? 'assigned', state: state ?? 'open', per_page: String(perPage ?? 20) })
+    const params = new URLSearchParams({
+      filter: filter ?? 'assigned',
+      state: state ?? 'open',
+      per_page: String(perPage ?? 20)
+    })
     const issues = await ghGet(`/issues?${params}`, token)
     return {
       ok: true,

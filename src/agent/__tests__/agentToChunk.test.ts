@@ -1,4 +1,5 @@
 import { createAgentEventToChunk } from '../agentToChunk'
+import { registerMcpAgentToolName } from '../mcpToolNames'
 
 describe('createAgentEventToChunk', () => {
   it('awaits and maps text and tool lifecycle events in order', async () => {
@@ -172,6 +173,104 @@ describe('createAgentEventToChunk', () => {
     expect(chunks[0]).toMatchObject({
       type: 'error',
       error: { message: 'Request was aborted.' }
+    })
+  })
+
+  it('treats stopReason=error as terminal even when the provider omits errorMessage', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(chunk => {
+      chunks.push(chunk)
+    })
+
+    await adapter({
+      type: 'agent_end',
+      messages: [{ role: 'assistant', stopReason: 'error', errorMessage: '', content: [] }]
+    } as never)
+
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toMatchObject({
+      type: 'error',
+      error: { code: 'AGENT_ERROR', message: 'The agent request failed.' }
+    })
+    expect(adapter.getState().agentEnded).toBe(true)
+  })
+
+  it('reports an empty successful agent turn as a protocol error', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(chunk => {
+      chunks.push(chunk)
+    })
+
+    await adapter({ type: 'agent_end', messages: [] } as never)
+
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).toMatchObject({
+      type: 'error',
+      error: {
+        code: 'AGENT_PROTOCOL_INCOMPLETE',
+        message: 'The agent completed without producing a visible response.'
+      }
+    })
+  })
+
+  it('closes pending tools as errors before terminating the agent turn', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(chunk => {
+      chunks.push(chunk)
+    })
+
+    await adapter({
+      type: 'tool_execution_start',
+      toolName: 'lookup',
+      toolCallId: 'call-pending',
+      args: { query: 'weather' }
+    } as never)
+    await adapter({ type: 'agent_end', messages: [] } as never)
+
+    expect(chunks[1]).toMatchObject({
+      type: 'mcp_tool_complete',
+      responses: [
+        expect.objectContaining({
+          toolCallId: 'call-pending',
+          status: 'error',
+          response: expect.objectContaining({ text: expect.stringContaining('did not complete') })
+        })
+      ]
+    })
+    expect(chunks[2]).toMatchObject({ type: 'error', error: { code: 'AGENT_ERROR' } })
+    expect(chunks).not.toContainEqual(expect.objectContaining({ type: 'block_complete' }))
+  })
+
+  it('restores MCP server metadata from a provider-compatible tool alias', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(chunk => {
+      chunks.push(chunk)
+    })
+    const toolName = registerMcpAgentToolName({
+      serverId: 'server:with:colon',
+      serverName: 'Remote Search',
+      toolName: 'search.web/v2'
+    })
+
+    expect(toolName).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+    await adapter({
+      type: 'tool_execution_start',
+      toolName,
+      toolCallId: 'call-mcp',
+      args: { query: 'Cherry' }
+    } as never)
+
+    expect(chunks[0]).toMatchObject({
+      responses: [
+        expect.objectContaining({
+          tool: expect.objectContaining({
+            serverId: 'server:with:colon',
+            serverName: 'Remote Search',
+            name: 'search.web/v2',
+            isBuiltIn: false
+          })
+        })
+      ]
     })
   })
 })

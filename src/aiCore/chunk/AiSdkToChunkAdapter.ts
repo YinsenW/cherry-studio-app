@@ -33,6 +33,7 @@ export class AiSdkToChunkAdapter {
   private firstTokenTimestamp: number | null = null
   private hasTextContent = false
   private getSessionWasCleared?: () => boolean
+  private terminalState: 'none' | 'success' | 'error' = 'none'
 
   constructor(
     private onChunk: (chunk: Chunk) => void,
@@ -93,6 +94,7 @@ export class AiSdkToChunkAdapter {
     // Reset state at the start of stream
     this.isFirstChunk = true
     this.hasTextContent = false
+    this.terminalState = 'none'
 
     try {
       while (true) {
@@ -119,10 +121,13 @@ export class AiSdkToChunkAdapter {
     } catch (error) {
       // 捕获流读取异常并发送 ERROR chunk
       logger.error('Stream reading error', error instanceof Error ? error : new Error(String(error)))
-      this.onChunk({
-        type: ChunkType.ERROR,
-        error: error instanceof Error ? error : new Error(String(error))
-      })
+      if (this.terminalState === 'none') {
+        this.terminalState = 'error'
+        this.onChunk({
+          type: ChunkType.ERROR,
+          error: error instanceof Error ? error : new Error(String(error))
+        })
+      }
     } finally {
       reader.releaseLock()
       this.resetTimingState()
@@ -144,6 +149,14 @@ export class AiSdkToChunkAdapter {
     }
   ) {
     logger.silly(`AI SDK chunk type: ${chunk.type}`, chunk)
+    if (this.terminalState !== 'none') {
+      logger.debug('Ignoring AI SDK chunk after terminal event', {
+        type: chunk.type,
+        terminalState: this.terminalState
+      })
+      return
+    }
+
     switch (chunk.type) {
       // === 文本相关事件 ===
       case 'text-start':
@@ -320,6 +333,20 @@ export class AiSdkToChunkAdapter {
       }
 
       case 'finish': {
+        if (chunk.finishReason === 'error') {
+          this.terminalState = 'error'
+          this.onChunk({
+            type: ChunkType.ERROR,
+            error: new ProviderSpecificError({
+              message: 'The model provider ended the stream with an error.',
+              provider: 'unknown'
+            })
+          })
+          this.resetTimingState()
+          break
+        }
+
+        this.terminalState = 'success'
         // Check if session was cleared (e.g., /clear command) and no text was output
         const sessionCleared = this.getSessionWasCleared?.() ?? false
         if (sessionCleared && !this.hasTextContent) {
@@ -389,12 +416,14 @@ export class AiSdkToChunkAdapter {
         })
         break
       case 'abort':
+        this.terminalState = 'error'
         this.onChunk({
           type: ChunkType.ERROR,
           error: new DOMException('Request was aborted', 'AbortError')
         })
         break
       case 'error':
+        this.terminalState = 'error'
         this.onChunk({
           type: ChunkType.ERROR,
           error:

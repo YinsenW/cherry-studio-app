@@ -3,7 +3,7 @@ import type { Message, MessageBlock } from '@/types/message'
 import { AssistantMessageStatus, MessageBlockStatus, MessageBlockType, UserMessageStatus } from '@/types/message'
 import { abortMap } from '@/utils/abortController'
 
-import { sendAgentMessage } from '../sendAgentMessage'
+import { regenerateAgentMessage, sendAgentMessage } from '../sendAgentMessage'
 
 const mockMessages = new Map<string, Message>()
 const mockBlocks = new Map<string, MessageBlock>()
@@ -11,9 +11,9 @@ const mockPromptTexts: string[] = []
 const mockAgentConstruction = jest.fn()
 const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
-const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _modelId: string, _providerId: string) => [])
+const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _model: Model) => [])
 const mockCreateMcpTools = jest.fn(async (_assistant: Assistant) => [])
-let mockAgentScenario: 'success' | 'error' = 'success'
+let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -90,7 +90,14 @@ const mockSaveUpdatesToDB = jest.fn(async (messageId: string, _topicId: string, 
 class MockAgentService {
   private listeners = new Set<(event: unknown) => void | Promise<void>>()
 
-  constructor(model: Model, provider: unknown, tools: unknown[]) {
+  constructor(
+    model: Model,
+    provider: unknown,
+    tools: unknown[],
+    _systemPrompt?: string,
+    _historyMessages?: unknown[],
+    _requestAssistant?: Assistant
+  ) {
     mockAgentConstruction(model, provider, tools)
   }
 
@@ -99,8 +106,15 @@ class MockAgentService {
     return () => this.listeners.delete(listener)
   }
 
-  async prompt(text: string) {
-    mockPromptTexts.push(text)
+  async prompt(input: string | { content: { type: string; text?: string }[] }) {
+    mockPromptTexts.push(
+      typeof input === 'string'
+        ? input
+        : input.content
+            .filter(part => part.type === 'text')
+            .map(part => part.text ?? '')
+            .join('')
+    )
 
     const events =
       mockAgentScenario === 'success'
@@ -119,13 +133,28 @@ class MockAgentService {
             },
             { type: 'agent_end', messages: [] }
           ]
-        : [
-            { type: 'agent_start' },
-            {
-              type: 'agent_end',
-              messages: [{ stopReason: 'error', errorMessage: '模拟 Provider 请求失败' }]
-            }
-          ]
+        : mockAgentScenario === 'error'
+          ? [
+              { type: 'agent_start' },
+              {
+                type: 'agent_end',
+                messages: [{ stopReason: 'error', errorMessage: '模拟 Provider 请求失败' }]
+              }
+            ]
+          : [
+              { type: 'agent_start' },
+              {
+                type: 'message_update',
+                assistantMessageEvent: {
+                  type: 'text_delta',
+                  partial: { content: [{ type: 'text', text: '未正确结束的响应' }] }
+                }
+              },
+              {
+                type: 'message_end',
+                message: { role: 'assistant', content: [{ type: 'text', text: '未正确结束的响应' }] }
+              }
+            ]
 
     for (const event of events) {
       for (const listener of this.listeners) {
@@ -166,8 +195,15 @@ jest.mock('@/agent/AgentService', () => ({
   }
 }))
 jest.mock('@/agent/messagesToPiContext', () => ({
-  messagesToPiContext: (messages: Message[], modelId: string, providerId: string) =>
-    mockMessagesToPiContext(messages, modelId, providerId)
+  messagesToPiContext: (messages: Message[], model: Model) => mockMessagesToPiContext(messages, model),
+  messageToPiUserMessage: async (message: Message) => ({
+    role: 'user',
+    content: message.blocks
+      .map(blockId => mockBlocks.get(blockId))
+      .filter((block): block is MessageBlock => block?.type === 'main_text')
+      .map(block => ({ type: 'text', text: 'content' in block ? String(block.content) : '' })),
+    timestamp: message.createdAt
+  })
 }))
 jest.mock('@/agent/oauth/oauthTools', () => ({ OAuthTool: {} }))
 jest.mock('@/agent/toolAdapter', () => ({ aiSdkToolToAgentTool: jest.fn() }))
@@ -187,11 +223,19 @@ jest.mock('@/aiCore/provider/providerConfig', () => ({
     apiHost: provider.apiHost.endsWith('/') ? provider.apiHost : `${provider.apiHost}/v1/`
   })
 }))
+jest.mock('@/config/models', () => ({ isFunctionCallingModel: () => true }))
 jest.mock('@/services/ApiService', () => ({
   fetchTopicNaming: (...args: Parameters<typeof mockFetchTopicNaming>) => mockFetchTopicNaming(...args)
 }))
 jest.mock('@/services/AssistantService', () => ({
-  getAssistantModel: (assistant: Pick<Assistant, 'model' | 'defaultModel'>) => assistant.model ?? assistant.defaultModel
+  getAssistantModel: (assistant: Pick<Assistant, 'model' | 'defaultModel'>) =>
+    assistant.model ?? assistant.defaultModel,
+  getAssistantSettings: (assistant: Assistant) => ({ contextCount: 20, ...assistant.settings })
+}))
+jest.mock('@/services/ConversationService', () => ({
+  ConversationService: {
+    filterMessagesPipeline: (messages: Message[]) => messages
+  }
 }))
 jest.mock('@/services/MessagesService', () => ({
   saveMessageAndBlocksToDB: (...args: Parameters<typeof mockSaveMessageAndBlocksToDB>) =>
@@ -279,7 +323,7 @@ describe('sendAgentMessage simulated main flow', () => {
     )
 
     expect(mockPromptTexts).toEqual(['请给我一句测试回复。'])
-    expect(mockMessagesToPiContext).toHaveBeenCalledWith([], model.id, model.provider)
+    expect(mockMessagesToPiContext).toHaveBeenCalledWith([], model)
     expect(mockCreateMcpTools).not.toHaveBeenCalled()
     expect(mockAgentConstruction).toHaveBeenCalledWith(
       model,
@@ -306,6 +350,7 @@ describe('sendAgentMessage simulated main flow', () => {
     const { message, blocks } = makeUserMessage()
     const assistantWithMcp: Assistant = {
       ...assistant,
+      settings: { toolUseMode: 'function' },
       mcpServers: [{ id: 'mcp-1' } as NonNullable<Assistant['mcpServers']>[number]]
     }
 
@@ -344,5 +389,43 @@ describe('sendAgentMessage simulated main flow', () => {
     )
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
     expect(abortMap.has(message.id)).toBe(false)
+  })
+
+  it('treats a missing agent_end event as a protocol error instead of synthesizing success', async () => {
+    mockAgentScenario = 'missing-terminal'
+    const { message, blocks } = makeUserMessage()
+
+    await sendAgentMessage(message, blocks, assistant, message.topicId)
+
+    const assistantMessage = Array.from(mockMessages.values()).find(candidate => candidate.role === 'assistant')
+    const errorBlock = Array.from(mockBlocks.values()).find(block => block.type === MessageBlockType.ERROR)
+
+    expect(assistantMessage?.status).toBe(AssistantMessageStatus.ERROR)
+    expect(errorBlock).toMatchObject({
+      messageId: assistantMessage?.id,
+      error: expect.objectContaining({
+        message: 'The agent session ended without a terminal event.'
+      })
+    })
+    expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
+    expect(abortMap.has(message.id)).toBe(false)
+  })
+
+  it('rejects regeneration when the original user message is missing', async () => {
+    const missingSourceMessage: Message = {
+      id: 'assistant-missing-source',
+      role: 'assistant',
+      assistantId: assistant.id,
+      topicId: 'topic-1',
+      askId: 'missing-user',
+      createdAt: 2,
+      status: AssistantMessageStatus.SUCCESS,
+      blocks: []
+    }
+    mockMessages.set(missingSourceMessage.id, missingSourceMessage)
+
+    await expect(regenerateAgentMessage(missingSourceMessage, assistant)).rejects.toThrow(
+      'Original user query missing-user not found'
+    )
   })
 })

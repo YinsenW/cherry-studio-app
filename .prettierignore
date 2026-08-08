@@ -13,5 +13,6 @@ drizzle/
 
 # Generated files
 *.generated.*
+pnpm-lock.yaml
 
 uniwind-types.d.ts

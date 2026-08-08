@@ -13,8 +13,8 @@
  */
 
 import { RNStreamableHTTPClientTransport } from '@cherrystudio/react-native-streamable-http'
-import { Client } from '@modelcontextprotocol/client'
 import type { Tool } from '@modelcontextprotocol/client'
+import { Client } from '@modelcontextprotocol/client'
 import { InteractionManager } from 'react-native'
 
 import { dismissDialog, presentDialog } from '@/componentsV2/base/Dialog/useDialogManager'

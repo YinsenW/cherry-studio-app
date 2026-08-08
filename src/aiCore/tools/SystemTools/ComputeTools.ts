@@ -165,7 +165,8 @@ export const trimText = tool({
 })
 
 export const substring = tool({
-  description: 'Extract a substring of text from start (inclusive) to end (exclusive). Negative indexes count from the end.',
+  description:
+    'Extract a substring of text from start (inclusive) to end (exclusive). Negative indexes count from the end.',
   inputSchema: z.object({
     text: z.string().describe('The text'),
     start: z.number().describe('Start index'),
@@ -181,7 +182,8 @@ export const length = tool({
 })
 
 export const now = tool({
-  description: 'Get the current date and time in ISO format, plus the device timezone and a human-readable local string.',
+  description:
+    'Get the current date and time in ISO format, plus the device timezone and a human-readable local string.',
   inputSchema: z.object({}),
   execute: async () => {
     const now = new Date()
@@ -196,7 +198,8 @@ export const now = tool({
 })
 
 export const formatDate = tool({
-  description: 'Format a date/time into a readable string. Provide an ISO date string and a dayjs format (e.g. "YYYY-MM-DD HH:mm").',
+  description:
+    'Format a date/time into a readable string. Provide an ISO date string and a dayjs format (e.g. "YYYY-MM-DD HH:mm").',
   inputSchema: z.object({
     iso: z.string().describe('ISO 8601 date string'),
     format: z.string().optional().describe('dayjs format, default "YYYY-MM-DD HH:mm"')
@@ -283,7 +286,13 @@ export const textDiff = tool({
     }
     while (i < n) removed.push(a[i++])
     while (j < m) added.push(b[j++])
-    return { ok: true, addedCount: added.length, removedCount: removed.length, added: added.slice(0, 50), removed: removed.slice(0, 50) }
+    return {
+      ok: true,
+      addedCount: added.length,
+      removedCount: removed.length,
+      added: added.slice(0, 50),
+      removed: removed.slice(0, 50)
+    }
   }
 })
 

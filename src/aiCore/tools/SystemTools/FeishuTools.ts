@@ -71,7 +71,10 @@ export const feishuSendText = tool({
     appId: z.string().describe('飞书自建应用的 App ID（cli_xxx）'),
     appSecret: z.string().describe('飞书自建应用的 App Secret'),
     receiveId: z.string().describe('接收者 ID：用户 open_id/union_id/user_id/email，或群 chat_id'),
-    receiveIdType: z.enum(['open_id', 'union_id', 'user_id', 'email', 'chat_id']).default('open_id').describe('receiveId 的类型'),
+    receiveIdType: z
+      .enum(['open_id', 'union_id', 'user_id', 'email', 'chat_id'])
+      .default('open_id')
+      .describe('receiveId 的类型'),
     text: z.string().describe('要发送的文本内容')
   }),
   execute: async ({ appId, appSecret, receiveId, receiveIdType, text }) => {
@@ -193,7 +196,10 @@ export const feishuGetDocx = tool({
     const token = await resolveToken(appId, appSecret)
     const doc = await feishuGet(`/docx/v1/documents/${encodeURIComponent(documentId)}`, token)
     assertFeishuOk(doc, '读取文档信息')
-    const blocksResp = await feishuGet(`/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=200`, token)
+    const blocksResp = await feishuGet(
+      `/docx/v1/documents/${encodeURIComponent(documentId)}/blocks?page_size=200`,
+      token
+    )
     assertFeishuOk(blocksResp, '读取文档内容')
     const blocks = blocksResp.data?.items ?? []
     const text = blocks

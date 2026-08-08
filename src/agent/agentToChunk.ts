@@ -4,7 +4,46 @@ import type { Chunk } from '@/types/chunk'
 import { ChunkType } from '@/types/chunk'
 import type { MCPToolResponse } from '@/types/mcp'
 
+import { getMcpAgentToolMetadata } from './mcpToolNames'
+
 type PiAgentEvent = Parameters<Parameters<Agent['subscribe']>[0]>[0]
+type TerminalMessage = {
+  role?: string
+  stopReason?: string
+  errorMessage?: string
+  statusCode?: number
+  responseBody?: string
+}
+
+export type AgentChunkAdapterState = {
+  agentEnded: boolean
+  hasVisibleOutput: boolean
+  terminalError: boolean
+}
+
+export type AgentEventToChunk = ((event: PiAgentEvent) => Promise<void>) & {
+  getState: () => AgentChunkAdapterState
+}
+
+const EMPTY_AGENT_RESPONSE_MESSAGE = 'The agent completed without producing a visible response.'
+const INCOMPLETE_TOOL_MESSAGE = 'Tool execution did not complete before the agent session ended.'
+
+function getTerminalFailure(message: TerminalMessage | undefined) {
+  if (
+    !message ||
+    (message.stopReason !== 'error' && message.stopReason !== 'aborted' && !message.errorMessage?.trim())
+  ) {
+    return null
+  }
+
+  const aborted = message.stopReason === 'aborted'
+  return {
+    message: aborted ? 'Request was aborted.' : message.errorMessage?.trim() || 'The agent request failed.',
+    aborted,
+    statusCode: message.statusCode,
+    responseBody: message.responseBody
+  }
+}
 
 /** 把 pi 工具的调用参数 + 结果转成现有 UI 的 MCPToolResponse（工具块渲染需要） */
 function makeToolResponse(
@@ -14,18 +53,20 @@ function makeToolResponse(
   status: MCPToolResponse['status'],
   resultText?: string
 ): MCPToolResponse {
+  const registeredRemoteTool = getMcpAgentToolMetadata(name)
   const remoteTool = /^mcp:([^:]+):(.+)$/.exec(name)
-  const toolName = remoteTool?.[2] ?? name
+  const toolName = registeredRemoteTool?.toolName ?? remoteTool?.[2] ?? name
+  const serverId = registeredRemoteTool?.serverId ?? remoteTool?.[1]
   return {
     id: toolCallId,
     tool: {
-      id: remoteTool ? name : `builtin_${name}`,
-      serverId: remoteTool?.[1] ?? 'builtin',
-      serverName: remoteTool ? 'MCP' : 'System',
+      id: serverId ? name : `builtin_${name}`,
+      serverId: serverId ?? 'builtin',
+      serverName: registeredRemoteTool?.serverName ?? (serverId ? 'MCP' : 'System'),
       name: toolName,
       description: toolName,
       inputSchema: { type: 'object', properties: {} },
-      isBuiltIn: !remoteTool,
+      isBuiltIn: !serverId,
       type: 'mcp'
     },
     toolCallId,
@@ -45,10 +86,13 @@ function makeToolResponse(
  */
 export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<void>) {
   let textStarted = false
-  let terminalError: { message: string; aborted: boolean } | null = null
+  let terminalError: ReturnType<typeof getTerminalFailure> = null
+  let agentEnded = false
+  let hasVisibleOutput = false
+  let terminalFailed = false
   const pendingTools = new Map<string, { name: string; args: Record<string, unknown> }>()
 
-  return async (event: PiAgentEvent) => {
+  const adapter = (async (event: PiAgentEvent) => {
     switch (event.type) {
       case 'agent_start':
         await emit({ type: ChunkType.LLM_RESPONSE_CREATED })
@@ -81,10 +125,9 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
       case 'message_end': {
         if (event.message.role === 'assistant') {
           if (event.message.errorMessage) {
-            terminalError = {
-              message: event.message.errorMessage,
-              aborted: event.message.stopReason === 'aborted'
-            }
+            terminalError = getTerminalFailure(event.message as TerminalMessage)
+          } else if (event.message.stopReason === 'error' || event.message.stopReason === 'aborted') {
+            terminalError = getTerminalFailure(event.message as TerminalMessage)
           }
 
           // 关键：TEXT_COMPLETE 必须带完整文本，否则 onTextComplete 会用空字符串
@@ -98,6 +141,9 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
           // however, only expose the completed message. Preserve that response
           // instead of treating a successful turn as an empty assistant block.
           if (textStarted || fullText) {
+            if (fullText.trim()) {
+              hasVisibleOutput = true
+            }
             if (!textStarted) {
               await emit({ type: ChunkType.TEXT_START })
             }
@@ -133,21 +179,47 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
           ]
         })
         pendingTools.delete(event.toolCallId)
+        hasVisibleOutput = true
         break
       }
 
       case 'agent_end': {
-        // 如果最终 assistant 消息带 errorMessage，把错误暴露到 UI（否则无响应难排查）
-        const last = event.messages?.[event.messages.length - 1]
-        const finalError =
-          last && 'errorMessage' in last && last.errorMessage
-            ? { message: last.errorMessage, aborted: last.stopReason === 'aborted' }
-            : terminalError
+        agentEnded = true
+        const finalAssistant = [...(event.messages ?? [])]
+          .reverse()
+          .find(message => message.role === 'assistant' || 'stopReason' in message || 'errorMessage' in message) as
+          | TerminalMessage
+          | undefined
+        let finalError = getTerminalFailure(finalAssistant) ?? terminalError
+
+        if (pendingTools.size > 0) {
+          for (const [toolCallId, pendingTool] of pendingTools) {
+            await emit({
+              type: ChunkType.MCP_TOOL_COMPLETE,
+              responses: [
+                makeToolResponse(pendingTool.name, toolCallId, pendingTool.args, 'error', INCOMPLETE_TOOL_MESSAGE)
+              ]
+            })
+          }
+          pendingTools.clear()
+          finalError ??= {
+            message: INCOMPLETE_TOOL_MESSAGE,
+            aborted: false,
+            statusCode: undefined,
+            responseBody: undefined
+          }
+        }
+
         if (finalError) {
+          terminalFailed = true
           const error = new Error(finalError.aborted ? 'Request was aborted.' : finalError.message) as Error & {
             code: string
+            statusCode?: number
+            responseBody?: string
           }
           error.code = 'AGENT_ERROR'
+          error.statusCode = finalError.statusCode
+          error.responseBody = finalError.responseBody
           await emit({
             type: ChunkType.ERROR,
             error
@@ -155,6 +227,15 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
           terminalError = null
           break
         }
+
+        if (!hasVisibleOutput) {
+          terminalFailed = true
+          const error = new Error(EMPTY_AGENT_RESPONSE_MESSAGE) as Error & { code: string }
+          error.code = 'AGENT_PROTOCOL_INCOMPLETE'
+          await emit({ type: ChunkType.ERROR, error })
+          break
+        }
+
         await emit({ type: ChunkType.BLOCK_COMPLETE })
         break
       }
@@ -162,5 +243,13 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
       default:
         break
     }
-  }
+  }) as AgentEventToChunk
+
+  adapter.getState = () => ({
+    agentEnded,
+    hasVisibleOutput,
+    terminalError: terminalFailed || terminalError !== null
+  })
+
+  return adapter
 }

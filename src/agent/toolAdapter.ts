@@ -23,11 +23,15 @@ export function aiSdkToolToAgentTool(name: string, aiTool: Tool): AgentTool {
     label: name,
     description: aiTool.description ?? name,
     parameters: parameters as AgentTool['parameters'],
-    execute: async (callId, args, _signal, _onUpdate) => {
+    execute: async (callId, args, signal, _onUpdate) => {
       if (!aiTool.execute) {
         throw new Error(`Tool "${name}" has no execute function`)
       }
-      const result = await aiTool.execute(args, undefined as never)
+      const result = await aiTool.execute(args, {
+        toolCallId: callId,
+        messages: [],
+        abortSignal: signal
+      })
       const text =
         typeof result === 'string'
           ? result

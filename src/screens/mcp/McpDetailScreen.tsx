@@ -67,7 +67,9 @@ export default function McpDetailScreen() {
 
   // OAuth hook for HTTP type servers
   // Use localUrl since it's always current (synced with mcpServer.baseUrl and updated by user edits)
-  const { isAuthenticated, isAuthenticating, triggerOAuth, clearAuth } = useMcpOAuth(isStreamableHttp ? localUrl : undefined)
+  const { isAuthenticated, isAuthenticating, triggerOAuth, clearAuth } = useMcpOAuth(
+    isStreamableHttp ? localUrl : undefined
+  )
 
   // Connection check state
   const [isCheckingConn, setIsCheckingConn] = useState(false)
@@ -263,9 +265,9 @@ export default function McpDetailScreen() {
                     <Text>{t('mcp.connectivity.status')}</Text>
                     <XStack className="items-center gap-2">
                       {isConnected ? (
-                        <Text className="text-green-500 text-sm">{t('mcp.connectivity.connected')}</Text>
+                        <Text className="text-sm text-green-500">{t('mcp.connectivity.connected')}</Text>
                       ) : connectivity?.connected === false ? (
-                        <Text className="text-red-400 text-sm">{t('mcp.connectivity.failed')}</Text>
+                        <Text className="text-sm text-red-400">{t('mcp.connectivity.failed')}</Text>
                       ) : null}
                       <Button
                         size="sm"
@@ -276,9 +278,7 @@ export default function McpDetailScreen() {
                         {isCheckingConn ? (
                           <Spinner size="sm" />
                         ) : (
-                          <Button.Label className="primary-text text-xs">
-                            {t('mcp.connectivity.test')}
-                          </Button.Label>
+                          <Button.Label className="primary-text text-xs">{t('mcp.connectivity.test')}</Button.Label>
                         )}
                       </Button>
                     </XStack>

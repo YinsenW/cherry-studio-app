@@ -32,7 +32,7 @@ describe('createStreamProcessor', () => {
     expect(events).toEqual(['start', 'start-complete', 'chunk:hello'])
   })
 
-  it('reports callback failures and continues processing later chunks', async () => {
+  it('reports callback failures without allowing a later completion to overwrite the error', async () => {
     const events: string[] = []
     const processor = createStreamProcessor({
       onTextChunk: () => {
@@ -49,6 +49,25 @@ describe('createStreamProcessor', () => {
     await processor({ type: ChunkType.TEXT_DELTA, text: 'hello' })
     await processor({ type: ChunkType.BLOCK_COMPLETE })
 
-    expect(events).toEqual(['error', 'complete'])
+    expect(events).toEqual(['error'])
+    expect(processor.getTerminalStatus()).toBe('error')
+  })
+
+  it('keeps an explicit error terminal when BLOCK_COMPLETE arrives afterwards', async () => {
+    const events: string[] = []
+    const processor = createStreamProcessor({
+      onError: () => {
+        events.push('error')
+      },
+      onComplete: () => {
+        events.push('complete')
+      }
+    })
+
+    await processor({ type: ChunkType.ERROR, error: new Error('provider failed') })
+    await processor({ type: ChunkType.BLOCK_COMPLETE })
+
+    expect(events).toEqual(['error'])
+    expect(processor.getTerminalStatus()).toBe('error')
   })
 })

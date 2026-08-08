@@ -1,13 +1,13 @@
 import type { AgentMessage, AgentTool } from '@earendil-works/pi-agent-core'
 import { Agent } from '@earendil-works/pi-agent-core'
-import type { Message as PiMessage } from '@earendil-works/pi-ai'
+import type { Message as PiMessage, UserMessage } from '@earendil-works/pi-ai'
 
-import type { Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
+import type { Assistant, Model as CherryModel, Provider as CherryProvider } from '@/types/assistant'
 
 import { createStreamFn } from './streamBridge'
 
 const DEFAULT_SYSTEM_PROMPT = [
-  'You are a helpful personal assistant agent running on the user\'s phone.',
+  "You are a helpful personal assistant agent running on the user's phone.",
   'You can use the provided tools to read and control device capabilities such as reminders, calendar, shortcuts, and fetching web content.',
   'Plan multi-step tasks, call tools when needed, and summarize results for the user.'
 ].join('\n')
@@ -27,7 +27,8 @@ export class AgentService {
     provider: CherryProvider,
     tools: AgentTool[],
     systemPrompt?: string,
-    historyMessages?: PiMessage[]
+    historyMessages?: PiMessage[],
+    requestAssistant?: Assistant
   ) {
     this.agent = new Agent({
       initialState: {
@@ -43,7 +44,7 @@ export class AgentService {
         tools,
         ...(historyMessages ? { messages: historyMessages as never } : {})
       },
-      streamFn: createStreamFn(model, provider)
+      streamFn: createStreamFn(model, provider, requestAssistant)
     })
   }
 
@@ -51,8 +52,13 @@ export class AgentService {
     return this.agent.subscribe(callback)
   }
 
-  async prompt(text: string) {
-    await this.agent.prompt(text)
+  async prompt(input: string | UserMessage) {
+    if (typeof input === 'string') {
+      await this.agent.prompt(input)
+      return
+    }
+
+    await this.agent.prompt(input)
   }
 
   async continue() {

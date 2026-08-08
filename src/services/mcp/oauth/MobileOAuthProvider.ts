@@ -7,7 +7,12 @@
  * This provider is designed to work with the forked @cherrystudio/react-native-streamable-http
  * transport that supports the authProvider option.
  */
-import type { OAuthClientProvider, OAuthClientInformationFull, OAuthClientMetadata, OAuthTokens } from "@modelcontextprotocol/client";
+import type {
+  OAuthClientInformationFull,
+  OAuthClientMetadata,
+  OAuthClientProvider,
+  OAuthTokens
+} from '@modelcontextprotocol/client'
 import * as Crypto from 'expo-crypto'
 import * as WebBrowser from 'expo-web-browser'
 import { z } from 'zod'

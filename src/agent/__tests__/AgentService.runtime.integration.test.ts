@@ -176,7 +176,12 @@ describe('AgentService runtime integration', () => {
       expect.objectContaining({
         model: mockLanguageModel,
         system: 'You are helpful.',
-        messages: [expect.objectContaining({ role: 'user', content: '请回复' })]
+        messages: [
+          expect.objectContaining({
+            role: 'user',
+            content: [{ type: 'text', text: '请回复' }]
+          })
+        ]
       })
     )
     expect(lifecycle).toEqual([

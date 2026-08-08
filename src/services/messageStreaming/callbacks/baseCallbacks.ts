@@ -118,7 +118,7 @@ export const createBaseCallbacks = async (deps: BaseCallbacksDependencies) => {
 
       const errorBlock = createErrorBlock(assistantMsgId, serializableError, { status: MessageBlockStatus.SUCCESS })
       await blockManager.handleBlockTransition(errorBlock, MessageBlockType.ERROR)
-      const errorStatus = isErrorTypeAbort ? AssistantMessageStatus.SUCCESS : AssistantMessageStatus.ERROR
+      const errorStatus = isErrorTypeAbort ? AssistantMessageStatus.PAUSED : AssistantMessageStatus.ERROR
 
       const toBeUpdatedMessage = await messageDatabase.getMessageById(assistantMsgId)
 
@@ -145,6 +145,18 @@ export const createBaseCallbacks = async (deps: BaseCallbacksDependencies) => {
 
       if (!finalAssistantMsg) {
         logger.error(`[onComplete] Assistant message ${assistantMsgId} not found.`)
+        return
+      }
+
+      if (
+        errorHandled ||
+        finalAssistantMsg.status === AssistantMessageStatus.ERROR ||
+        finalAssistantMsg.status === AssistantMessageStatus.PAUSED
+      ) {
+        logger.warn('Ignoring successful completion after terminal error state', {
+          assistantMsgId,
+          currentStatus: finalAssistantMsg.status
+        })
         return
       }
 
