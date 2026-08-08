@@ -36,8 +36,14 @@ import { runAppDataMigrations } from './services/AppInitializationService'
 SplashScreen.preventAutoHideAsync()
 const logger = loggerService.withContext('AppInitialization')
 
-// 数据库初始化组件
-function DatabaseInitializer({ children }: { children: React.ReactNode }) {
+type DatabaseInitializerAttemptProps = {
+  children: React.ReactNode
+  onRetryMigrations: () => void
+}
+
+// Keep the migration hook in a keyed child so a database migration failure can
+// be retried by remounting the hook, not only by retrying app-data migration.
+function DatabaseInitializerAttempt({ children, onRetryMigrations }: DatabaseInitializerAttemptProps) {
   const { success, error } = useMigrations(db, migrations)
   const [loaded] = useFonts({
     FiraCode: require('./assets/fonts/FiraCode-Regular.ttf')
@@ -75,6 +81,15 @@ function DatabaseInitializer({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const retryInitialization = useCallback(() => {
+    if (error) {
+      onRetryMigrations()
+      return
+    }
+
+    void initializeApp()
+  }, [error, initializeApp, onRetryMigrations])
+
   useEffect(() => {
     if (success && loaded) {
       void initializeApp()
@@ -94,7 +109,7 @@ function DatabaseInitializer({ children }: { children: React.ReactNode }) {
         <Text className="text-center text-red-500">
           {initializationError?.message || 'Database initialization failed. Please restart the app.'}
         </Text>
-        {!error && <Button title="Retry" onPress={() => void initializeApp()} />}
+        <Button title="Retry" onPress={retryInitialization} />
       </View>
     )
   }
@@ -106,6 +121,20 @@ function DatabaseInitializer({ children }: { children: React.ReactNode }) {
 
   // 迁移成功且字体已加载，渲染子组件
   return <>{children}</>
+}
+
+// 数据库初始化组件
+function DatabaseInitializer({ children }: { children: React.ReactNode }) {
+  const [migrationAttempt, setMigrationAttempt] = useState(0)
+  const retryMigrations = useCallback(() => {
+    setMigrationAttempt(attempt => attempt + 1)
+  }, [])
+
+  return (
+    <DatabaseInitializerAttempt key={migrationAttempt} onRetryMigrations={retryMigrations}>
+      {children}
+    </DatabaseInitializerAttempt>
+  )
 }
 
 // 主题和导航组件

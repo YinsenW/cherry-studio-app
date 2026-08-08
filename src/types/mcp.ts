@@ -8,6 +8,10 @@ export const MCPConfigSampleSchema = z.object({
   env: z.record(z.string(), z.string()).optional()
 })
 export type MCPConfigSample = z.infer<typeof MCPConfigSampleSchema>
+/** Normalize common Streamable HTTP transport spellings used by MCP exporters. */
+export const normalizeMcpServerType = (type: string) =>
+  type.toLowerCase().includes('http') ? 'streamableHttp' : type
+
 /**
  * 定义 MCP 服务器的通信类型。
  * stdio: 通过标准输入/输出与子进程通信 (最常见)。
@@ -17,13 +21,7 @@ export type MCPConfigSample = z.infer<typeof MCPConfigSampleSchema>
  */
 export const McpServerTypeSchema = z
   .string()
-  .transform(type => {
-    if (type.includes('http')) {
-      return 'streamableHttp'
-    } else {
-      return type
-    }
-  })
+  .transform(normalizeMcpServerType)
   .pipe(z.union([z.literal('stdio'), z.literal('sse'), z.literal('streamableHttp'), z.literal('inMemory')])) // 大多数情况下默认使用 stdio
 
 /**

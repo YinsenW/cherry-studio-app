@@ -439,7 +439,8 @@
             "MISSING_ENDPOINT": "{{name}} is missing a remote endpoint (url or baseUrl).",
             "NO_SERVERS": "There are no MCP servers to import in this configuration.",
             "SAVE_FAILED": "Could not save the MCP configuration. Please try again.",
-            "UNSUPPORTED_TRANSPORT": "{{name}} is not a supported remote Streamable HTTP service. Mobile imports do not support stdio, SSE, or built-in services."
+            "UNSUPPORTED_STDIO": "{{name}} is a local command (stdio) MCP configuration. Mobile apps cannot run local commands; use a remote Streamable HTTP MCP service instead.",
+            "UNSUPPORTED_TRANSPORT": "{{name}} is not a supported remote Streamable HTTP service. Mobile imports only support remote Streamable HTTP services."
           },
           "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
           "preview": "{{count}} MCP server(s) will be added: {{names}}",

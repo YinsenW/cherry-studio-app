@@ -439,7 +439,8 @@
             "MISSING_ENDPOINT": "{{name}} 缺少遠端服務位址（url 或 baseUrl）。",
             "NO_SERVERS": "設定中沒有可匯入的 MCP 伺服器。",
             "SAVE_FAILED": "無法儲存 MCP 設定，請重試。",
-            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的遠端 Streamable HTTP 服務。行動裝置不支援匯入 stdio、SSE 或內建服務。"
+            "UNSUPPORTED_STDIO": "{{name}} 是本機命令型（stdio）MCP 設定。行動裝置無法執行本機命令；請改用可透過 http(s) 存取的遠端 Streamable HTTP MCP 服務。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的遠端 Streamable HTTP 服務。行動裝置僅支援遠端 Streamable HTTP 服務。"
           },
           "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
           "preview": "將新增 {{count}} 個 MCP 伺服器：{{names}}",

@@ -439,7 +439,8 @@
             "MISSING_ENDPOINT": "{{name}} 缺少远程服务地址（url 或 baseUrl）。",
             "NO_SERVERS": "配置中没有可导入的 MCP 服务。",
             "SAVE_FAILED": "无法保存 MCP 配置，请重试。",
-            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的远程 Streamable HTTP 服务。移动端不支持 stdio、SSE 或内置服务导入。"
+            "UNSUPPORTED_STDIO": "{{name}} 是本地命令型（stdio）MCP 配置。移动端无法运行本地命令；请改用可通过 http(s) 访问的远程 Streamable HTTP MCP 服务。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} 不是可用的远程 Streamable HTTP 服务。移动端仅支持远程 Streamable HTTP 服务。"
           },
           "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
           "preview": "将添加 {{count}} 个 MCP 服务器：{{names}}",

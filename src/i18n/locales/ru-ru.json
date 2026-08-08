@@ -439,7 +439,8 @@
             "MISSING_ENDPOINT": "Для {{name}} не указан удалённый адрес (url или baseUrl).",
             "NO_SERVERS": "В конфигурации нет MCP-серверов для импорта.",
             "SAVE_FAILED": "Не удалось сохранить конфигурацию MCP. Повторите попытку.",
-            "UNSUPPORTED_TRANSPORT": "{{name}} не является поддерживаемым удалённым сервисом Streamable HTTP. Мобильный импорт не поддерживает stdio, SSE и встроенные сервисы."
+            "UNSUPPORTED_STDIO": "{{name}} — это конфигурация MCP с локальной командой (stdio). Мобильное приложение не может запускать локальные команды; используйте удалённый сервис MCP Streamable HTTP.",
+            "UNSUPPORTED_TRANSPORT": "{{name}} не является поддерживаемым удалённым сервисом Streamable HTTP. Мобильный импорт поддерживает только удалённые сервисы Streamable HTTP."
           },
           "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
           "preview": "Будет добавлено MCP-серверов: {{count}} — {{names}}",

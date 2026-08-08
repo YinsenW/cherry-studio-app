@@ -109,9 +109,9 @@ describe('parseMcpJsonConfig', () => {
     ],
     ['invalid URL', JSON.stringify({ mcpServers: { bad: { url: 'ftp://example.com/mcp' } } }), 'INVALID_URL'],
     [
-      'local stdio configuration',
+      'Claude Desktop local stdio configuration',
       JSON.stringify({ mcpServers: { local: { command: 'npx', args: ['-y', 'local-mcp'] } } }),
-      'UNSUPPORTED_TRANSPORT'
+      'UNSUPPORTED_STDIO'
     ],
     ['SSE configuration', JSON.stringify({ mcpServers: { stream: { type: 'sse', url: 'https://example.com/sse' } } }), 'UNSUPPORTED_TRANSPORT']
   ])('rejects %s', (_label, json, errorCode) => {

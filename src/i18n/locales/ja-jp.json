@@ -439,7 +439,8 @@
             "MISSING_ENDPOINT": "{{name}} にリモートエンドポイント（url または baseUrl）がありません。",
             "NO_SERVERS": "取り込める MCP サーバーが設定にありません。",
             "SAVE_FAILED": "MCP 設定を保存できませんでした。もう一度お試しください。",
-            "UNSUPPORTED_TRANSPORT": "{{name}} は対応しているリモート Streamable HTTP サービスではありません。モバイルでは stdio、SSE、内蔵サービスの取り込みはできません。"
+            "UNSUPPORTED_STDIO": "{{name}} はローカルコマンド型（stdio）の MCP 設定です。モバイルではローカルコマンドを実行できないため、リモートの Streamable HTTP MCP サービスを使用してください。",
+            "UNSUPPORTED_TRANSPORT": "{{name}} は対応しているリモート Streamable HTTP サービスではありません。モバイルではリモートの Streamable HTTP サービスのみを取り込めます。"
           },
           "placeholder": "{\n  \"mcpServers\": {\n    \"weather\": {\n      \"url\": \"https://example.com/mcp\",\n      \"headers\": { \"Authorization\": \"Bearer ...\" }\n    }\n  }\n}",
           "preview": "{{count}} 個の MCP サーバーを追加します：{{names}}",

@@ -167,8 +167,24 @@ export function createStreamProcessor(callbacks: StreamProcessorCallbacks = {}):
   }
 
   let processing = Promise.resolve()
+  const recoverProcessingChain = async (error: unknown) => {
+    // processChunk catches expected failures itself. This is a last-resort
+    // guard so an unforeseen rejected promise cannot poison the serial queue
+    // and cause every later streamed chunk to be skipped.
+    logger.error('Unexpected stream processing queue failure:', error)
+    try {
+      await callbacks.onError?.(error)
+    } catch (onErrorFailure) {
+      logger.error('Error while reporting queued stream processing failure:', onErrorFailure)
+    }
+  }
+
   const streamProcessor = ((chunk: Chunk) => {
-    processing = processing.then(() => processChunk(chunk))
+    processing = processing
+      .then(() => processChunk(chunk))
+      .catch(recoverProcessingChain)
+      // Keep the queue healthy even if the recovery path itself fails.
+      .catch(() => undefined)
     return processing
   }) as StreamProcessor
 

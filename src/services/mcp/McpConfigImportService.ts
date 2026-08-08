@@ -7,6 +7,7 @@ export type McpJsonImportErrorCode =
   | 'INVALID_ROOT'
   | 'NO_SERVERS'
   | 'INVALID_SERVER'
+  | 'UNSUPPORTED_STDIO'
   | 'UNSUPPORTED_TRANSPORT'
   | 'MISSING_ENDPOINT'
   | 'INVALID_URL'
@@ -90,10 +91,6 @@ function normalizeConfigShape(config: unknown): unknown {
   }
   delete normalized.serverUrl
 
-  if (typeof normalized.type === 'string' && normalized.type.toLowerCase().includes('http')) {
-    normalized.type = 'streamableHttp'
-  }
-
   return normalized
 }
 
@@ -115,7 +112,14 @@ function toRemoteMcpServer(
   const endpoint = (parsedConfig.baseUrl || parsedConfig.url || '').trim()
   const transport = parsedConfig.type ?? 'streamableHttp'
 
-  if (parsedConfig.command || transport !== 'streamableHttp') {
+  // Claude Desktop and similar exports omit `type` for local command-based
+  // MCPs, so identify both explicit and inferred stdio before the generic
+  // unsupported-transport case.
+  if (parsedConfig.command || transport === 'stdio') {
+    return makeError('UNSUPPORTED_STDIO', name)
+  }
+
+  if (transport !== 'streamableHttp') {
     return makeError('UNSUPPORTED_TRANSPORT', name)
   }
 
