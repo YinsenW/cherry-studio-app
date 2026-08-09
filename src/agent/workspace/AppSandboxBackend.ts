@@ -489,6 +489,12 @@ export class AppSandboxBackend implements WorkspaceBackend {
       await this.ensureReady()
       const source = await this.entryFor(sourceNormalized)
       if (!source || !source.exists) throw new Error(`Path not found: ${sourceNormalized}`)
+      if (
+        !isFile(source) &&
+        (destinationNormalized === sourceNormalized || destinationNormalized.startsWith(`${sourceNormalized}/`))
+      ) {
+        throw new Error('A directory cannot be copied or moved into itself.')
+      }
       const parent = await this.ensureParentDirectory(destinationNormalized)
       const destinationName = splitWorkspacePath(destinationNormalized, false).pop()!
       if (this.findChild(parent, destinationName)) {
