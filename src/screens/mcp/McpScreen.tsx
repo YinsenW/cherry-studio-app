@@ -18,6 +18,7 @@ import { useMcpServers } from '@/hooks/useMcp'
 import { useSearch } from '@/hooks/useSearch'
 import { useSkeletonLoading } from '@/hooks/useSkeletonLoading'
 import { useToast } from '@/hooks/useToast'
+import { useCurrentTopic } from '@/hooks/useTopic'
 import { mcpService } from '@/services/McpService'
 import type { MCPServer } from '@/types/mcp'
 import type { DrawerNavigationProps, McpNavigationProps } from '@/types/naviagate'
@@ -27,6 +28,7 @@ export default function McpScreen() {
   const { t } = useTranslation()
   const navigation = useNavigation<DrawerNavigationProps & McpNavigationProps>()
   const toast = useToast()
+  const { currentTopic } = useCurrentTopic()
   const { mcpServers, isLoading, updateMcpServers } = useMcpServers()
   const {
     searchText,
@@ -44,6 +46,11 @@ export default function McpScreen() {
   }
 
   const handleNavigateToMarket = () => {
+    if (currentTopic?.assistantId) {
+      navigation.navigate('McpMarketScreen', { assistantId: currentTopic.assistantId })
+      return
+    }
+
     navigation.navigate('McpMarketScreen')
   }
 
