@@ -83,7 +83,7 @@ export const McpServerSheet: React.FC = () => {
 
   const handleNavigateToMcpMarket = () => {
     dismissMcpServerSheet()
-    navigation.navigate('Mcp', { screen: 'McpMarketScreen' })
+    navigation.navigate('Mcp', { screen: 'McpMarketScreen', params: { assistantId: assistant.id } })
   }
 
   const handleNavigateToToolTab = () => {

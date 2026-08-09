@@ -1,12 +1,12 @@
 /**
- * McpService - Unified MCP server management service with optimistic updates
+ * McpService - Unified MCP server management service with coherent caches
  *
  * Design Principles:
  * 1. Singleton Pattern - Global unique instance with shared cache
  * 2. LRU Cache - Cache recently accessed MCP servers (20 servers)
  * 3. Type Safety - Full generic support with automatic type inference
  * 4. Observer Pattern - Integrated with React's useSyncExternalStore
- * 5. Optimistic Updates - Immediate UI response with background persistence
+ * 5. Durable Writes - Publish cache updates only after persistence succeeds
  *
  * Architecture:
  * ```
@@ -34,7 +34,7 @@
  * // Get MCP server
  * const mcpServer = await mcpService.getMcpServer(id)
  *
- * // Create new MCP server (optimistic)
+ * // Create new MCP server
  * const newMcp = await mcpService.createMcpServer(mcpData)
  *
  * // Subscribe to MCP server changes
@@ -407,46 +407,36 @@ export class McpService {
   // ==================== Public API: CRUD Operations ====================
 
   /**
-   * Create a new MCP server (optimistic)
+   * Create a new MCP server.
    *
-   * Creates MCP server immediately in memory, then persists to database.
+   * Persistence completes before caches and subscribers are updated, so a UI
+   * success state always corresponds to a database record that later tool
+   * discovery can read.
    *
    * @param mcpServer - The MCP server data
    * @returns The created MCP server
    */
   public async createMcpServer(mcpServer: MCPServer): Promise<MCPServer> {
-    logger.info('Creating new MCP server (optimistic):', mcpServer.id)
-
-    // Optimistic update: add to caches immediately
-    if (this.allMcpServersCache.size > 0 || this.allMcpServersCacheTimestamp !== null) {
-      this.allMcpServersCache.set(mcpServer.id, mcpServer)
-      logger.verbose(`Added new MCP server to cache: ${mcpServer.id}`)
-    }
-
-    // Notify subscribers (UI updates immediately)
-    this.notifyMcpServerSubscribers(mcpServer.id)
-    this.notifyGlobalSubscribers()
-    this.notifyAllMcpServersSubscribers()
+    logger.info('Creating new MCP server:', mcpServer.id)
 
     try {
-      // Persist to database
       await mcpDatabase.upsertMcps([mcpServer])
-      logger.info('MCP server created successfully:', mcpServer.id)
-      return mcpServer
-    } catch (error) {
-      // Rollback on failure
-      logger.error('Failed to create MCP server, rolling back:', error as Error)
 
-      // Remove from cache
-      if (this.allMcpServersCache.has(mcpServer.id)) {
-        this.allMcpServersCache.delete(mcpServer.id)
+      // A just-created server must be immediately readable by ID for the
+      // install -> tools/list -> Agent registration chain.
+      this.addToCache(mcpServer.id, mcpServer)
+      if (this.allMcpServersCacheTimestamp !== null) {
+        this.allMcpServersCache.set(mcpServer.id, mcpServer)
       }
 
-      // Notify subscribers to revert UI
       this.notifyMcpServerSubscribers(mcpServer.id)
       this.notifyGlobalSubscribers()
       this.notifyAllMcpServersSubscribers()
 
+      logger.info('MCP server created successfully:', mcpServer.id)
+      return mcpServer
+    } catch (error) {
+      logger.error('Failed to create MCP server:', error as Error)
       throw error
     }
   }
@@ -471,7 +461,11 @@ export class McpService {
 
     await mcpDatabase.upsertMcps(mcpServers)
 
-    if (this.allMcpServersCache.size > 0 || this.allMcpServersCacheTimestamp !== null) {
+    for (const server of mcpServers) {
+      this.addToCache(server.id, server)
+    }
+
+    if (this.allMcpServersCacheTimestamp !== null) {
       for (const server of mcpServers) {
         this.allMcpServersCache.set(server.id, server)
       }

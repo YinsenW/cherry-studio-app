@@ -45,7 +45,7 @@ export type AppDrawerParamList = {
   AssistantMarket: { screen: 'AssistantMarketScreen' } | undefined
   Mcp:
     | { screen: 'McpScreen' }
-    | { screen: 'McpMarketScreen' }
+    | { screen: 'McpMarketScreen'; params?: { assistantId?: string } }
     | { screen: 'McpDetailScreen'; params: { mcpId: string } }
 }
 

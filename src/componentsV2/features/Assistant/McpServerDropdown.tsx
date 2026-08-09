@@ -54,7 +54,7 @@ export function McpServerDropdown({ assistant, updateAssistant }: McpServerDropd
   if (mcpOptions.length === 0) {
     return (
       <Pressable
-        onPress={() => navigation.navigate('Mcp', { screen: 'McpMarketScreen' })}
+        onPress={() => navigation.navigate('Mcp', { screen: 'McpMarketScreen', params: { assistantId: assistant.id } })}
         className="bg-card flex-row items-center gap-2 rounded-xl active:opacity-80">
         <Text className="text-foreground-secondary text-sm" numberOfLines={1}>
           {t('mcp.server.empty.add')}

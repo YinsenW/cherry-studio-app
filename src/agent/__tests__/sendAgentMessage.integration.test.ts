@@ -12,7 +12,7 @@ const mockAgentConstruction = jest.fn()
 const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
 const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _model: Model) => [])
-const mockCreateMcpTools = jest.fn(async (_assistant: Assistant) => [])
+const mockCreateMcpTools = jest.fn(async (_assistant: Assistant): Promise<unknown[]> => [])
 let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -223,7 +223,9 @@ jest.mock('@/aiCore/provider/providerConfig', () => ({
     apiHost: provider.apiHost.endsWith('/') ? provider.apiHost : `${provider.apiHost}/v1/`
   })
 }))
-jest.mock('@/config/models', () => ({ isFunctionCallingModel: () => true }))
+// Simulate a custom provider/model name that the built-in capability table
+// cannot recognize. Explicit function mode must still enable its tools.
+jest.mock('@/config/models', () => ({ isFunctionCallingModel: () => false }))
 jest.mock('@/services/ApiService', () => ({
   fetchTopicNaming: (...args: Parameters<typeof mockFetchTopicNaming>) => mockFetchTopicNaming(...args)
 }))
@@ -346,13 +348,22 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(abortMap.has(message.id)).toBe(false)
   })
 
-  it('keeps the core agent response working when MCP servers are configured', async () => {
+  it('injects discovered MCP tools while keeping the core Agent response working', async () => {
     const { message, blocks } = makeUserMessage()
     const assistantWithMcp: Assistant = {
       ...assistant,
       settings: { toolUseMode: 'function' },
       mcpServers: [{ id: 'mcp-1' } as NonNullable<Assistant['mcpServers']>[number]]
     }
+    mockCreateMcpTools.mockResolvedValueOnce([
+      {
+        name: 'mcp_exa_web_search',
+        label: 'Exa · web_search_exa',
+        description: 'Search the web',
+        parameters: { type: 'object', properties: {} },
+        execute: jest.fn()
+      }
+    ])
 
     await sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
 
@@ -361,7 +372,19 @@ describe('sendAgentMessage simulated main flow', () => {
       block => block.type === MessageBlockType.MAIN_TEXT && block.messageId === assistantMessage?.id
     )
 
-    expect(mockAgentConstruction).toHaveBeenCalledWith(model, expect.any(Object), [])
+    expect(mockCreateMcpTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: assistantWithMcp.id,
+        model,
+        mcpServers: assistantWithMcp.mcpServers,
+        settings: assistantWithMcp.settings
+      })
+    )
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ name: 'mcp_exa_web_search' })])
+    )
     expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
     expect(textBlock).toMatchObject({ content: '模拟响应', status: MessageBlockStatus.SUCCESS })
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
