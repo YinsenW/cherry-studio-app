@@ -12,13 +12,17 @@ import type { MCPServer } from '@/types/mcp'
 
 import { mcpClientService } from '../McpClientService'
 
+jest.mock('expo/fetch', () => ({
+  fetch: (...args: Parameters<typeof global.fetch>) => global.fetch(...args)
+}))
+
 // Create mock functions that will be used by the mocks
 const mockConnect = jest.fn()
 const mockClose = jest.fn()
 const mockListTools = jest.fn()
 const mockCallTool = jest.fn()
 const mockTransportClose = jest.fn()
-const mockCreateMobileOAuthProvider = jest.fn()
+const mockCreateMobileAuthProvider = jest.fn()
 const mockPerformOAuthFlow = jest.fn()
 
 // Mock modules - Jest hoists these to the top
@@ -41,7 +45,7 @@ jest.mock('@cherrystudio/react-native-streamable-http', () => ({
 }))
 
 jest.mock('../oauth', () => ({
-  createMobileOAuthProvider: (...args: unknown[]) => mockCreateMobileOAuthProvider(...args),
+  createMobileAuthProvider: (...args: unknown[]) => mockCreateMobileAuthProvider(...args),
   performOAuthFlow: (...args: unknown[]) => mockPerformOAuthFlow(...args)
 }))
 
@@ -84,7 +88,7 @@ describe('McpClientService', () => {
     mockListTools.mockResolvedValue({ tools: [] })
     mockCallTool.mockResolvedValue({ isError: false, content: [] })
     mockTransportClose.mockResolvedValue(undefined)
-    mockCreateMobileOAuthProvider.mockReturnValue({})
+    mockCreateMobileAuthProvider.mockReturnValue({})
     mockPerformOAuthFlow.mockResolvedValue(true)
   })
 
@@ -181,7 +185,7 @@ describe('McpClientService', () => {
 
         await mcpClientService.getClient(server)
 
-        expect(mockCreateMobileOAuthProvider).toHaveBeenCalledWith(server.baseUrl)
+        expect(mockCreateMobileAuthProvider).toHaveBeenCalledWith(server.baseUrl)
       })
     })
 
@@ -438,6 +442,25 @@ describe('McpClientService', () => {
         expect(result.content[0].type).toBe('image')
         expect(result.content[0].data).toBe('base64data')
         expect(result.content[0].mimeType).toBe('image/png')
+      })
+
+      it('should preserve structured content and forward the agent abort signal', async () => {
+        const server = createMockServer()
+        const controller = new AbortController()
+
+        mockCallTool.mockResolvedValueOnce({
+          isError: false,
+          structuredContent: { matches: [{ title: 'Cherry' }] },
+          content: [{ type: 'text', text: 'structured result' }]
+        })
+
+        const result = await mcpClientService.callTool(server, 'structured-tool', {}, controller.signal)
+
+        expect(mockCallTool).toHaveBeenCalledWith(
+          { name: 'structured-tool', arguments: {} },
+          { signal: controller.signal }
+        )
+        expect(result.structuredContent).toEqual({ matches: [{ title: 'Cherry' }] })
       })
 
       it('should handle resource content type', async () => {

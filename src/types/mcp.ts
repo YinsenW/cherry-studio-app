@@ -408,7 +408,7 @@ export interface NormalToolResponse extends Omit<ToolCallResponse, 'tool'> {
 }
 
 export interface MCPToolResultContent {
-  type: 'text' | 'image' | 'audio' | 'resource'
+  type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link'
   text?: string
   data?: string
   mimeType?: string
@@ -418,11 +418,15 @@ export interface MCPToolResultContent {
     mimeType?: string
     blob?: string
   }
+  uri?: string
+  name?: string
+  description?: string
 }
 
 export interface MCPCallToolResponse {
   content: MCPToolResultContent[]
   isError?: boolean
+  structuredContent?: unknown
 }
 
 export interface MCPResource {

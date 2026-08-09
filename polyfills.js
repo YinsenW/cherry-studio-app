@@ -1,3 +1,4 @@
+import { TextDecoderStream, TextEncoderStream } from '@stardazed/streams-text-encoding'
 import structuredClone from '@ungap/structured-clone'
 import { Buffer } from 'buffer'
 import * as ExpoCrypto from 'expo-crypto'
@@ -79,20 +80,17 @@ if (typeof globalThis.TextDecoder === 'undefined') {
 }
 
 if (Platform.OS !== 'web') {
-  const setupPolyfills = async () => {
-    const { polyfillGlobal } = await import('react-native/Libraries/Utilities/PolyfillFunctions')
+  // This must be installed synchronously. The MCP v2 Streamable HTTP
+  // transport creates its SSE parser on the first request, which can happen
+  // before an async dynamic import has completed on a cold Hermes startup.
+  const { polyfillGlobal } = require('react-native/Libraries/Utilities/PolyfillFunctions')
 
-    const { TextEncoderStream, TextDecoderStream } = await import('@stardazed/streams-text-encoding')
-
-    if (!('structuredClone' in global)) {
-      polyfillGlobal('structuredClone', () => structuredClone)
-    }
-
-    polyfillGlobal('TextEncoderStream', () => TextEncoderStream)
-    polyfillGlobal('TextDecoderStream', () => TextDecoderStream)
+  if (!('structuredClone' in global)) {
+    polyfillGlobal('structuredClone', () => structuredClone)
   }
 
-  setupPolyfills()
+  polyfillGlobal('TextEncoderStream', () => TextEncoderStream)
+  polyfillGlobal('TextDecoderStream', () => TextDecoderStream)
 }
 
 export {}
