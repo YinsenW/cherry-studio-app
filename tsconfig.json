@@ -7,6 +7,7 @@
     "strict": true,
     "baseUrl": "src",
     "paths": {
+      "@cherrystudio/react-native-streamable-http": ["../packages/react-native-streamable-http/src/index.ts"],
       "@/*": ["./*"],
       "@db/*": ["../db/*"],
       "@db": ["../db/index"],

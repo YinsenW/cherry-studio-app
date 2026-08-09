@@ -1,5 +1,9 @@
-function createEventSourceResolver(originalResolveRequest, polyfillPath) {
+function createEventSourceResolver(originalResolveRequest, polyfillPath, sourceModules = {}) {
   return (context, moduleName, platform) => {
+    const sourceModulePath = sourceModules[moduleName]
+    if (sourceModulePath) {
+      return { filePath: sourceModulePath, type: 'sourceFile' }
+    }
     if (moduleName === 'eventsource') {
       return { filePath: polyfillPath, type: 'sourceFile' }
     }

@@ -8,22 +8,23 @@
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "test:ci": "jest --ci --coverage --maxWorkers=2 --passWithNoTests",
-    "test": "jest --watchAll --coverage --passWithNoTests",
+    "build:mcp-transport": "node ./node_modules/typescript/bin/tsc -p ./packages/react-native-streamable-http/tsconfig.json",
+    "test:ci": "pnpm build:mcp-transport && jest --ci --coverage --maxWorkers=2 --passWithNoTests",
+    "test": "pnpm build:mcp-transport && jest --watchAll --coverage --passWithNoTests",
     "check:i18n": "tsx scripts/check-i18n.ts",
     "sync:i18n": "tsx scripts/sync-i18n.ts",
     "auto:i18n": "dotenv -e .env -- tsx scripts/auto-translate-i18n.ts",
-    "typecheck": "npx tsc --noEmit",
+    "typecheck": "pnpm build:mcp-transport && npx tsc --noEmit",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm check:i18n && pnpm lint:check && pnpm format:check",
     "eas-build-pre-install": "corepack enable && corepack prepare pnpm@10.26.2 --activate",
-    "eas-build-post-install": "pnpm --filter @cherrystudio/react-native-streamable-http run build",
+    "eas-build-post-install": "pnpm build:mcp-transport",
     "analyze:ios": "source-map-explorer 'dist/_expo/static/js/ios/*.js' 'dist/_expo/static/js/ios/*.js.map'",
     "analyze:android": "source-map-explorer 'dist/_expo/static/js/android/*.js' 'dist/_expo/static/js/android/*.js.map'",
-    "postinstall": "pnpm --filter @cherrystudio/react-native-streamable-http run build"
+    "postinstall": "pnpm build:mcp-transport"
   },
   "jest": {
     "preset": "jest-expo",
@@ -35,6 +36,7 @@
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@earendil-works/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|uniwind|heroui-native)"
     ],
     "moduleNameMapper": {
+      "^@cherrystudio/react-native-streamable-http$": "<rootDir>/packages/react-native-streamable-http/src/index.ts",
       "^@/(.*)$": "<rootDir>/src/$1"
     },
     "collectCoverage": true,

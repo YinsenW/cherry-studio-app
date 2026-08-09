@@ -39,6 +39,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('MCP v2 protocol negotiation', () => {
+  it('uses the workspace transport source instead of its ignored dist artifact', () => {
+    expect(require.resolve('@cherrystudio/react-native-streamable-http')).toMatch(
+      /packages\/react-native-streamable-http\/src\/index\.ts$/
+    )
+  })
+
   it('uses modern 2026-07-28 headers and envelopes for a modern server', async () => {
     const requests: RecordedRequest[] = []
     let toolsListPage = 0
