@@ -2,11 +2,10 @@ describe('Metro eventsource compatibility routing', () => {
   it('stubs eventsource without replacing the SSE parser used by AI providers', () => {
     const { createEventSourceResolver } = require('../../../scripts/metro/createEventSourceResolver')
     const polyfillPath = require.resolve('../eventsource')
-    const resolveRequest = createEventSourceResolver(undefined, polyfillPath) as (
-      context: Record<string, unknown>,
-      moduleName: string,
-      platform: string
-    ) => { filePath: string; type: string }
+    const mcpTransportPath = require.resolve('../../../packages/react-native-streamable-http/src/index')
+    const resolveRequest = createEventSourceResolver(undefined, polyfillPath, {
+      '@cherrystudio/react-native-streamable-http': mcpTransportPath
+    }) as (context: Record<string, unknown>, moduleName: string, platform: string) => { filePath: string; type: string }
     const fallbackResult = {
       filePath: require.resolve('eventsource-parser/stream'),
       type: 'sourceFile'
@@ -17,6 +16,10 @@ describe('Metro eventsource compatibility routing', () => {
 
     const eventSourceResult = resolveRequest(context, 'eventsource', 'android')
     expect(eventSourceResult.filePath).toMatch(/src\/polyfills\/eventsource\.ts$/)
+    expect(context.resolveRequest).not.toHaveBeenCalled()
+
+    const mcpTransportResult = resolveRequest(context, '@cherrystudio/react-native-streamable-http', 'android')
+    expect(mcpTransportResult).toEqual({ filePath: mcpTransportPath, type: 'sourceFile' })
     expect(context.resolveRequest).not.toHaveBeenCalled()
 
     const parserResult = resolveRequest(context, 'eventsource-parser/stream', 'android')
