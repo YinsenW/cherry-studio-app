@@ -37,6 +37,13 @@ type TrashEntry = {
   kind: 'file' | 'directory'
 }
 
+type ResolvedFileReference = {
+  path: string
+  name: string
+  parent: Directory
+  file: File | null
+}
+
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength
 }
@@ -120,7 +127,7 @@ export class AppSandboxBackend implements WorkspaceBackend {
 
   private readonly root: Directory
   private readonly stateRoot: Directory
-  private readonly trashRoot: Directory
+  private trashRoot: Directory
   private readonly trashManifestFile: File
   private readonly mutationQueue = new Map<string, Promise<void>>()
   private readonly trashEntries = new Map<string, TrashEntry>()
@@ -154,14 +161,26 @@ export class AppSandboxBackend implements WorkspaceBackend {
           : 'The selected folder is no longer available. Pick it again or choose the mobile workspace.'
       throw new Error(accessMessage)
     }
-    if (!this.trashRoot.exists) this.trashRoot.create({ intermediates: true, idempotent: true })
+    if (this.isSafWorkspace()) {
+      const existingTrash = this.findChild(this.root, '.cherry-agent-trash')
+      if (existingTrash) {
+        if (isFile(existingTrash)) throw new Error('The workspace internal trash path is occupied by a file.')
+        this.trashRoot = existingTrash
+      } else {
+        this.trashRoot = this.root.createDirectory('.cherry-agent-trash')
+      }
+    } else if (!this.trashRoot.exists) {
+      this.trashRoot.create({ intermediates: true, idempotent: true })
+    }
     if (!this.trashManifestLoaded) await this.loadTrashManifest()
   }
 
   async readText(path = '.', offset = 1, limit = MAX_READ_LINES): Promise<ReadTextResult> {
     await this.ensureReady()
     const normalized = this.filePath(path, false)
-    const file = this.fileFor(normalized)
+    const reference = await this.resolveFileReference(normalized)
+    const file = reference.file
+    if (!file) throw new Error(`File not found: ${normalized}`)
     this.assertFileExists(file, normalized)
     const raw = await file.text()
     const lines = normalizeLineEndings(raw).split('\n')
@@ -200,17 +219,14 @@ export class AppSandboxBackend implements WorkspaceBackend {
 
     return this.withMutation(normalized, async () => {
       await this.ensureReady()
-      const file = this.fileFor(normalized)
-      if (file.exists && Paths.info(file.uri).isDirectory === true) {
-        throw new Error(`Path is a directory: ${normalized}`)
-      }
-      const beforeRevision = file.exists ? this.revisionFor(file) : null
+      const reference = await this.resolveFileReference(normalized, true)
+      let file = reference.file
+      const beforeRevision = file ? this.revisionFor(file) : null
       this.assertExpectedRevision(expectedRevision, beforeRevision?.value)
       const operationId = uuid()
-      const snapshotPath = await this.snapshotFile(normalized, file, operationId)
-      const before = file.exists ? await file.text() : ''
-      this.ensureParentDirectory(normalized)
-      if (!file.exists) file.create({ intermediates: true, overwrite: false })
+      const snapshotPath = file ? await this.snapshotFile(normalized, file, operationId) : undefined
+      const before = file ? await file.text() : ''
+      if (!file) file = this.createFileInDirectory(reference.parent, reference.name, 'text/plain')
       file.write(content)
       const result = {
         path: normalized,
@@ -236,7 +252,9 @@ export class AppSandboxBackend implements WorkspaceBackend {
 
     return this.withMutation(normalized, async () => {
       await this.ensureReady()
-      const file = this.fileFor(normalized)
+      const reference = await this.resolveFileReference(normalized)
+      const file = reference.file
+      if (!file) throw new Error(`File not found: ${normalized}`)
       this.assertFileExists(file, normalized)
       const beforeRevision = this.revisionFor(file)
       this.assertExpectedRevision(expectedRevision, beforeRevision.value)
@@ -266,7 +284,7 @@ export class AppSandboxBackend implements WorkspaceBackend {
 
   async list(options: WorkspaceListOptions = {}): Promise<WorkspaceEntry[]> {
     await this.ensureReady()
-    const basePath = this.directoryPath(options.path)
+    const basePath = await this.directoryPath(options.path)
     const maxEntries = Math.max(1, Math.min(2_000, options.maxEntries ?? 500))
     const maxDepth = Math.max(0, Math.min(20, options.maxDepth ?? (options.recursive ? 5 : 0)))
     const includeHidden = options.includeHidden ?? false
@@ -297,8 +315,8 @@ export class AppSandboxBackend implements WorkspaceBackend {
   async stat(path = '.'): Promise<WorkspaceEntry & { exists: true }> {
     await this.ensureReady()
     const normalized = normalizeWorkspacePath(path)
-    const entry = this.entryFor(normalized)
-    if (!entry.exists) throw new Error(`Path not found: ${normalized}`)
+    const entry = await this.entryFor(normalized)
+    if (!entry || !entry.exists) throw new Error(`Path not found: ${normalized}`)
     const entryIsFile = isFile(entry)
     return {
       path: normalized,
@@ -338,9 +356,10 @@ export class AppSandboxBackend implements WorkspaceBackend {
     for (const entry of files) {
       if (entry.kind !== 'file' || (entry.size ?? 0) > maxFileBytes) continue
       scannedFiles++
-      const file = this.fileFor(entry.path)
       let text: string
       try {
+        const file = (await this.resolveFileReference(entry.path)).file
+        if (!file) continue
         text = normalizeLineEndings(await file.text())
       } catch {
         continue
@@ -367,8 +386,7 @@ export class AppSandboxBackend implements WorkspaceBackend {
     this.assertWritable()
     return this.withMutation(normalized, async () => {
       await this.ensureReady()
-      const directory = this.directoryFor(normalized)
-      if (!directory.exists) directory.create({ intermediates: true, idempotent: true })
+      await this.resolveDirectory(normalized, true)
       const result = { path: normalized, operationId: uuid() }
       await this.recordOperation('mkdir', normalized, result, context)
       return result
@@ -400,15 +418,18 @@ export class AppSandboxBackend implements WorkspaceBackend {
     if (normalized === '.') throw new Error('The workspace root cannot be trashed.')
     return this.withMutation(normalized, async () => {
       await this.ensureReady()
-      const source = this.entryFor(normalized)
-      if (!source.exists) throw new Error(`Path not found: ${normalized}`)
+      const source = await this.entryFor(normalized)
+      if (!source || !source.exists) throw new Error(`Path not found: ${normalized}`)
       const operationId = uuid()
-      const trashDirectory = new Directory(this.trashRoot, operationId)
-      trashDirectory.create({ intermediates: true, idempotent: true })
-      const trashTarget = isFile(source)
-        ? new File(trashDirectory, source.name)
-        : new Directory(trashDirectory, source.name)
-      this.relocate(source, trashTarget, true)
+      const trashDirectory = this.createDirectoryInDirectory(this.trashRoot, operationId)
+      const trashTarget = this.isSafWorkspace()
+        ? isFile(source)
+          ? this.createFileInDirectory(trashDirectory, source.name, source.type ?? 'application/octet-stream')
+          : this.createDirectoryInDirectory(trashDirectory, source.name)
+        : isFile(source)
+          ? new File(trashDirectory, source.name)
+          : new Directory(trashDirectory, source.name)
+      await this.relocate(source, trashTarget, true)
       const trashPath = `@trash/${operationId}/${source.name}`
       this.trashEntries.set(trashPath, {
         sourcePath: normalized,
@@ -434,9 +455,18 @@ export class AppSandboxBackend implements WorkspaceBackend {
     return this.withMutation(targetPath, async () => {
       const source = entry.kind === 'file' ? new File(entry.trashUri) : new Directory(entry.trashUri)
       if (!source.exists) throw new Error('Trash item no longer exists.')
-      const target = entry.kind === 'file' ? this.fileFor(targetPath) : this.directoryFor(targetPath)
-      this.ensureParentDirectory(targetPath)
-      this.relocate(source, target, true)
+      const parent = await this.ensureParentDirectory(targetPath)
+      const targetName = splitWorkspacePath(targetPath, false).pop()!
+      const existingTarget = this.findChild(parent, targetName)
+      if (existingTarget) throw new Error(`Destination already exists: ${targetPath}`)
+      const target = this.isSafWorkspace()
+        ? entry.kind === 'file'
+          ? this.createFileInDirectory(parent, targetName, 'application/octet-stream')
+          : this.createDirectoryInDirectory(parent, targetName)
+        : entry.kind === 'file'
+          ? new File(parent, targetName)
+          : new Directory(parent, targetName)
+      await this.relocate(source, target, true)
       this.trashEntries.delete(trashPath)
       await this.persistTrashManifest()
       const result = { path: targetPath, operationId: uuid() }
@@ -457,14 +487,21 @@ export class AppSandboxBackend implements WorkspaceBackend {
     const lockKey = `${sourceNormalized}->${destinationNormalized}`
     return this.withMutation(lockKey, async () => {
       await this.ensureReady()
-      const source = this.entryFor(sourceNormalized)
-      if (!source.exists) throw new Error(`Path not found: ${sourceNormalized}`)
-      const destination = isFile(source)
-        ? this.fileFor(destinationNormalized)
-        : this.directoryFor(destinationNormalized)
-      if (destination.exists) throw new Error(`Destination already exists: ${destinationNormalized}`)
-      this.ensureParentDirectory(destinationNormalized)
-      this.relocate(source, destination, move)
+      const source = await this.entryFor(sourceNormalized)
+      if (!source || !source.exists) throw new Error(`Path not found: ${sourceNormalized}`)
+      const parent = await this.ensureParentDirectory(destinationNormalized)
+      const destinationName = splitWorkspacePath(destinationNormalized, false).pop()!
+      if (this.findChild(parent, destinationName)) {
+        throw new Error(`Destination already exists: ${destinationNormalized}`)
+      }
+      const destination = this.isSafWorkspace()
+        ? isFile(source)
+          ? this.createFileInDirectory(parent, destinationName, source.type ?? 'application/octet-stream')
+          : this.createDirectoryInDirectory(parent, destinationName)
+        : isFile(source)
+          ? new File(parent, destinationName)
+          : new Directory(parent, destinationName)
+      await this.relocate(source, destination, move)
       const result = { source: sourceNormalized, destination: destinationNormalized, operationId: uuid() }
       await this.recordOperation(
         move ? 'move' : 'copy',
@@ -484,9 +521,9 @@ export class AppSandboxBackend implements WorkspaceBackend {
     return normalized
   }
 
-  private directoryPath(path: string | undefined): Directory {
+  private async directoryPath(path: string | undefined): Promise<Directory> {
     const normalized = this.filePath(path)
-    return this.directoryFor(normalized)
+    return this.resolveDirectory(normalized)
   }
 
   private directoryPathName(path: string | undefined): string {
@@ -503,12 +540,75 @@ export class AppSandboxBackend implements WorkspaceBackend {
     return new File(this.root, ...segments)
   }
 
-  private entryFor(path: string): File | Directory {
+  private isSafWorkspace(): boolean {
+    return this.descriptor.kind === 'android_saf'
+  }
+
+  private findChild(directory: Directory, name: string): File | Directory | undefined {
+    return directory.list().find(entry => entry.name === name)
+  }
+
+  private async resolveDirectory(path: string, create = false): Promise<Directory> {
+    const normalized = this.filePath(path)
+    if (this.descriptor.kind === 'app_sandbox') {
+      const directory = this.directoryFor(normalized)
+      if (create && !directory.exists) directory.create({ intermediates: true, idempotent: true })
+      return directory
+    }
+
+    let current = this.root
+    for (const segment of splitWorkspacePath(normalized)) {
+      const child = this.findChild(current, segment)
+      if (child) {
+        if (isFile(child)) throw new Error(`Path is a file: ${normalized}`)
+        current = child
+        continue
+      }
+      if (!create) throw new Error(`Path not found: ${normalized}`)
+      current = current.createDirectory(segment)
+    }
+    return current
+  }
+
+  private async resolveFileReference(path: string, createParent = false): Promise<ResolvedFileReference> {
+    const normalized = this.filePath(path, false)
+    const segments = splitWorkspacePath(normalized, false)
+    const name = segments.pop()!
+    const parentPath = segments.length > 0 ? segments.join('/') : '.'
+    const parent = await this.resolveDirectory(parentPath, createParent)
+
+    if (this.descriptor.kind === 'app_sandbox') {
+      const file = this.fileFor(normalized)
+      if (file.exists && Paths.info(file.uri).isDirectory === true) {
+        throw new Error(`Path is a directory: ${normalized}`)
+      }
+      return { path: normalized, name, parent, file: file.exists ? file : null }
+    }
+
+    const child = this.findChild(parent, name)
+    if (child && !isFile(child)) throw new Error(`Path is a directory: ${normalized}`)
+    return { path: normalized, name, parent, file: child && isFile(child) ? child : null }
+  }
+
+  private async entryFor(path: string): Promise<File | Directory | null> {
     if (path === '.') return this.root
-    const segments = splitWorkspacePath(path, false)
-    const file = new File(this.root, ...segments)
-    if (file.exists && Paths.info(file.uri).isDirectory !== true) return file
-    return new Directory(this.root, ...segments)
+    const normalized = this.filePath(path, false)
+    if (this.descriptor.kind === 'app_sandbox') {
+      const segments = splitWorkspacePath(normalized, false)
+      const file = new File(this.root, ...segments)
+      if (file.exists && Paths.info(file.uri).isDirectory !== true) return file
+      const directory = new Directory(this.root, ...segments)
+      return directory.exists ? directory : null
+    }
+
+    let current = this.root as File | Directory
+    for (const segment of splitWorkspacePath(normalized, false)) {
+      if (isFile(current)) return null
+      const child = this.findChild(current, segment)
+      if (!child) return null
+      current = child
+    }
+    return current
   }
 
   private assertFileExists(file: File, path: string): void {
@@ -537,11 +637,25 @@ export class AppSandboxBackend implements WorkspaceBackend {
     }
   }
 
-  private ensureParentDirectory(path: string): void {
+  private async ensureParentDirectory(path: string): Promise<Directory> {
     const segments = splitWorkspacePath(path, false)
     segments.pop()
-    const parent = new Directory(this.root, ...segments)
-    if (!parent.exists) parent.create({ intermediates: true, idempotent: true })
+    const parentPath = segments.length > 0 ? segments.join('/') : '.'
+    return this.resolveDirectory(parentPath, true)
+  }
+
+  private createFileInDirectory(parent: Directory, name: string, mimeType: string): File {
+    if (this.descriptor.kind !== 'app_sandbox') return parent.createFile(name, mimeType)
+    const file = new File(parent, name)
+    file.create({ intermediates: true, overwrite: false })
+    return file
+  }
+
+  private createDirectoryInDirectory(parent: Directory, name: string): Directory {
+    if (this.descriptor.kind !== 'app_sandbox') return parent.createDirectory(name)
+    const directory = new Directory(parent, name)
+    directory.create({ intermediates: true, idempotent: true })
+    return directory
   }
 
   private async snapshotFile(path: string, file: File, operationId: string): Promise<string | undefined> {
@@ -550,7 +664,8 @@ export class AppSandboxBackend implements WorkspaceBackend {
     snapshotDirectory.create({ intermediates: true, idempotent: true })
     const snapshotFile = new File(snapshotDirectory, path.replaceAll('/', '__'))
     try {
-      file.copy(snapshotFile)
+      if (this.isSafWorkspace()) snapshotFile.write(await file.bytes())
+      else file.copy(snapshotFile)
       return snapshotFile.uri
     } catch (error) {
       // Some SAF providers do not permit cross-provider copies. Snapshots are
@@ -560,17 +675,33 @@ export class AppSandboxBackend implements WorkspaceBackend {
     }
   }
 
-  private relocate(source: File | Directory, destination: File | Directory, move: boolean): void {
+  private async relocate(source: File | Directory, destination: File | Directory, move: boolean): Promise<void> {
     // Android SAF providers can reject a cross-provider rename. Copy/delete
     // gives external folders the same logical move semantics while retaining
     // the safer atomic rename for the private app sandbox.
-    if (move && this.descriptor.kind !== 'app_sandbox') {
-      source.copy(destination)
-      source.delete()
+    if (this.descriptor.kind !== 'app_sandbox') {
+      await this.copyExternalEntry(source, destination)
+      if (move) source.delete()
       return
     }
     if (move) source.move(destination)
     else source.copy(destination)
+  }
+
+  private async copyExternalEntry(source: File | Directory, destination: File | Directory): Promise<void> {
+    if (isFile(source)) {
+      if (!isFile(destination)) throw new Error('A file can only be copied to a file destination.')
+      destination.write(await source.bytes())
+      return
+    }
+
+    if (isFile(destination)) throw new Error('A directory cannot be copied to a file destination.')
+    for (const child of source.list()) {
+      const target = isFile(child)
+        ? this.createFileInDirectory(destination, child.name, child.type ?? 'application/octet-stream')
+        : this.createDirectoryInDirectory(destination, child.name)
+      await this.copyExternalEntry(child, target)
+    }
   }
 
   private async loadTrashManifest(): Promise<void> {
