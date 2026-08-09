@@ -1,3 +1,5 @@
+import type { RouteProp } from '@react-navigation/native'
+import { useNavigation, useRoute } from '@react-navigation/native'
 import { cn, Tabs } from 'heroui-native'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,7 +12,10 @@ import { presentMcpServerItemSheet } from '@/componentsV2/features/MCP/McpServer
 import XStack from '@/componentsV2/layout/XStack'
 import { initBuiltinMcp } from '@/config/mcp'
 import { useSearch } from '@/hooks/useSearch'
+import type { McpStackParamList } from '@/navigators/McpStackNavigator'
+import type { McpMarketplaceInstallResult } from '@/services/mcp/McpMarketplaceInstallService'
 import type { MCPServer } from '@/types/mcp'
+import type { McpNavigationProps } from '@/types/naviagate'
 
 type McpMarketTab = 'builtin' | 'modelscope' | 'registry'
 
@@ -22,6 +27,9 @@ const MARKET_TABS: { value: McpMarketTab; labelKey: string }[] = [
 
 export function McpMarketScreen() {
   const { t } = useTranslation()
+  const navigation = useNavigation<McpNavigationProps>()
+  const route = useRoute<RouteProp<McpStackParamList, 'McpMarketScreen'>>()
+  const assistantId = route.params?.assistantId
   const [isReady, setIsReady] = useState(false)
   const [activeTab, setActiveTab] = useState<McpMarketTab>('builtin')
   const mcpServers = useMemo(() => initBuiltinMcp(), [])
@@ -44,6 +52,13 @@ export function McpMarketScreen() {
   const handleMcpServerItemPress = (mcp: MCPServer) => {
     presentMcpServerItemSheet(mcp, { mode: 'preview' })
   }
+
+  const handleMarketplaceInstalled = useCallback(
+    async (result: McpMarketplaceInstallResult) => {
+      navigation.navigate('McpDetailScreen', { mcpId: result.server.id })
+    },
+    [navigation]
+  )
 
   return (
     <SafeAreaContainer className="pb-0">
@@ -74,7 +89,12 @@ export function McpMarketScreen() {
             <McpMarketContent mcps={filteredMcps} handleMcpServerItemPress={handleMcpServerItemPress} mode="add" />
           </>
         ) : (
-          <McpMarketplaceContent key={activeTab} marketplace={activeTab} />
+          <McpMarketplaceContent
+            key={activeTab}
+            marketplace={activeTab}
+            assistantId={assistantId}
+            onInstalled={handleMarketplaceInstalled}
+          />
         )}
       </Container>
     </SafeAreaContainer>

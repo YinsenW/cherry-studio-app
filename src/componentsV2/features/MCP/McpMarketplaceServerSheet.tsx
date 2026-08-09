@@ -16,13 +16,16 @@ import { useTheme } from '@/hooks/useTheme'
 import { useToast } from '@/hooks/useToast'
 import { loggerService } from '@/services/LoggerService'
 import {
+  type McpMarketplaceInstallResult,
+  mcpMarketplaceInstallService
+} from '@/services/mcp/McpMarketplaceInstallService'
+import {
   isMarketplaceConfigurationSatisfied,
   McpMarketplaceError,
   type McpMarketplaceServer,
   type McpMarketplaceServerDetail,
   mcpMarketplaceService
 } from '@/services/mcp/McpMarketplaceService'
-import { mcpService } from '@/services/McpService'
 import { isIOS, isIOS26 } from '@/utils/device'
 
 const SHEET_NAME = 'mcp-marketplace-server-sheet'
@@ -30,7 +33,8 @@ const logger = loggerService.withContext('McpMarketplaceServerSheet')
 
 interface McpMarketplaceServerSheetData {
   server: McpMarketplaceServer | null
-  onInstalled?: () => void
+  assistantId?: string
+  onInstalled?: (result: McpMarketplaceInstallResult) => void | Promise<void>
 }
 
 const emptySheetData: McpMarketplaceServerSheetData = { server: null }
@@ -163,19 +167,38 @@ export const McpMarketplaceServerSheet: React.FC = () => {
       }
 
       const mcpServer = mcpMarketplaceService.toMcpServer(detail, connection)
-      const existingServers = await mcpService.getAllMcpServers()
-      const duplicate = existingServers.some(
-        existing => existing.provider === mcpServer.provider && existing.providerUrl === mcpServer.providerUrl
-      )
-      if (duplicate) {
+      const result = await mcpMarketplaceInstallService.install(mcpServer, { assistantId: sheetData.assistantId })
+
+      if (result.assistantAttachmentRequested && !result.attachedToAssistant) {
+        toast.show(t('mcp.market.add.assistant_attach_failed', { mcp_name: result.server.name }), {
+          color: 'orange',
+          duration: 4000
+        })
+      } else if (result.toolDiscoveryFailed || result.tools.length === 0) {
+        toast.show(t('mcp.market.add.no_tools', { mcp_name: result.server.name }), {
+          color: 'orange',
+          duration: 4000
+        })
+      } else if (result.attachedToAssistant) {
+        toast.show(
+          t('mcp.market.add.success_agent', {
+            mcp_name: result.server.name,
+            count: result.tools.length
+          }),
+          { duration: 3000 }
+        )
+      } else if (result.alreadyInstalled) {
         toast.show(t('mcp.market.already_added'), { color: 'orange', duration: 3000 })
-        return
+      } else {
+        toast.show(t('mcp.market.add.success', { mcp_name: result.server.name }), { duration: 3000 })
       }
 
-      await mcpService.createMcpServer(mcpServer)
-      toast.show(t('mcp.market.add.success', { mcp_name: mcpServer.name }), { duration: 3000 })
-      sheetData.onInstalled?.()
-      dismissMcpMarketplaceServerSheet()
+      await dismissMcpMarketplaceServerSheet()
+      try {
+        await sheetData.onInstalled?.(result)
+      } catch {
+        logger.warn('Marketplace MCP installed but post-install navigation failed', { serverId: result.server.id })
+      }
     } catch (error) {
       const key = getMarketplaceErrorKey(error)
       // Never log the original error here: deployment failures can include

@@ -427,7 +427,10 @@
       },
       "market": {
         "add": {
-          "success": "{{mcp_name}} を追加しました"
+          "assistant_attach_failed": "{{mcp_name}} を追加しましたが、現在の Agent では有効にできませんでした。ツール一覧から手動で選択してください。",
+          "no_tools": "{{mcp_name}} を追加しましたが、呼び出し可能なツールはまだ見つかっていません。サーバー詳細で接続または認証を確認してください。",
+          "success": "{{mcp_name}} を追加しました",
+          "success_agent": "{{mcp_name}} を追加し、現在の Agent に {{count}} 個のツールを登録しました"
         },
         "already_added": "この MCP サーバーはすでに追加されています。",
         "builtin": "組み込み",

@@ -94,7 +94,12 @@ async function loadMcpAgentTools(assistant: Assistant): Promise<AgentTool[]> {
   }
 
   try {
-    const { createMcpTools } = await import('@/aiCore/tools/SystemTools/McpTools')
+    // Keep this module lazy so an optional MCP-runtime initialization failure
+    // cannot break the core reply path. A literal require is also resolved
+    // deterministically by Metro and Jest in release/test CommonJS bundles.
+    const { createMcpTools } = require('@/aiCore/tools/SystemTools/McpTools') as {
+      createMcpTools: (assistant: Assistant) => Promise<AgentTool[]>
+    }
     return await createMcpTools(assistant)
   } catch (error) {
     logger.warn('Agent will continue without MCP tools because MCP initialization failed:', error as Error)
@@ -133,13 +138,22 @@ function validateAgentTools(tools: AgentTool[]): AgentTool[] {
   return accepted
 }
 
+/**
+ * Model-name detection is necessarily incomplete for custom providers. An
+ * explicit function tool-use selection is the user's authoritative signal
+ * that the configured model accepts tools.
+ */
+function shouldLoadAgentTools(assistant: Assistant): boolean {
+  const model = getAssistantModel(assistant)
+  return Boolean(model && (assistant.settings?.toolUseMode === 'function' || isFunctionCallingModel(model)))
+}
+
 async function loadAgentTools(
   assistant: Assistant,
   topicId?: Topic['id'],
   providedWorkspaceBackend?: WorkspaceBackend | null
 ): Promise<AgentTool[]> {
-  const model = getAssistantModel(assistant)
-  if (!model || !isFunctionCallingModel(model)) {
+  if (!shouldLoadAgentTools(assistant)) {
     return []
   }
 
@@ -245,7 +259,7 @@ export async function runAgentSession(
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    const canUseAgentTools = isFunctionCallingModel(resolvedAssistant.model!)
+    const canUseAgentTools = shouldLoadAgentTools(resolvedAssistant)
     let workspaceBackend: WorkspaceBackend | null = null
     if (canUseAgentTools) {
       try {

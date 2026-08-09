@@ -11,6 +11,7 @@ import PressableRow from '@/componentsV2/layout/PressableRow'
 import XStack from '@/componentsV2/layout/XStack'
 import YStack from '@/componentsV2/layout/YStack'
 import { useTheme } from '@/hooks/useTheme'
+import type { McpMarketplaceInstallResult } from '@/services/mcp/McpMarketplaceInstallService'
 import {
   isMcpMarketplaceError,
   type McpMarketplaceId,
@@ -22,6 +23,8 @@ import { presentMcpMarketplaceServerSheet } from './McpMarketplaceServerSheet'
 
 interface McpMarketplaceContentProps {
   marketplace: McpMarketplaceId
+  assistantId?: string
+  onInstalled?: (result: McpMarketplaceInstallResult) => void | Promise<void>
 }
 
 const PAGE_SIZE = 20
@@ -35,7 +38,11 @@ function getErrorKey(error: unknown): string {
  * first so its transport, deployment requirements, and security status are
  * checked before anything is written to the MCP database.
  */
-export const McpMarketplaceContent: React.FC<McpMarketplaceContentProps> = ({ marketplace }) => {
+export const McpMarketplaceContent: React.FC<McpMarketplaceContentProps> = ({
+  marketplace,
+  assistantId,
+  onInstalled
+}) => {
   const { t } = useTranslation()
   const { bottom } = useSafeAreaInsets()
   const { isDark } = useTheme()
@@ -137,7 +144,7 @@ export const McpMarketplaceContent: React.FC<McpMarketplaceContentProps> = ({ ma
   }, [])
 
   const handleOpenServer = (server: McpMarketplaceServer) => {
-    presentMcpMarketplaceServerSheet({ server })
+    presentMcpMarketplaceServerSheet({ server, assistantId, onInstalled })
   }
 
   const hasMore =

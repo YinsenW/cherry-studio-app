@@ -7,7 +7,7 @@ import McpScreen from '@/screens/mcp/McpScreen'
 
 export type McpStackParamList = {
   McpScreen: undefined
-  McpMarketScreen: undefined
+  McpMarketScreen: { assistantId?: string } | undefined
   McpDetailScreen: { mcpId?: string }
 }
 
