@@ -86,6 +86,15 @@ export default function McpDetailScreen() {
     try {
       const result = await mcpClientService.checkConnectivity(mcpServer)
       setConnectivity(result)
+      if (result.connected) {
+        // Refresh the visible list through McpService and repair Assistant
+        // bindings created by older builds. Only active servers are attached;
+        // testing a disabled server must not silently enable it for the Agent.
+        await refetchTools()
+        if (mcpServer.isActive) {
+          await attachMcpServersToAssistant(currentTopic?.assistantId, [mcpServer])
+        }
+      }
     } catch {
       setConnectivity({ connected: false, error: 'Connection check failed', errorCode: 'UNKNOWN' as const })
     } finally {

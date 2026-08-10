@@ -11,6 +11,7 @@ import { Client } from '@modelcontextprotocol/client'
 import type { MCPServer } from '@/types/mcp'
 
 import { mcpClientService } from '../McpClientService'
+import { mcpExpoNativeFetch } from '../McpFetch'
 
 jest.mock('expo/fetch', () => ({
   fetch: (...args: Parameters<typeof global.fetch>) => global.fetch(...args)
@@ -36,6 +37,10 @@ jest.mock('@modelcontextprotocol/client', () => ({
 }))
 
 jest.mock('@cherrystudio/react-native-streamable-http', () => ({
+  createMcpFetchBridge:
+    (fetchFn: (url: string, init?: Parameters<typeof global.fetch>[1]) => Promise<Response>) =>
+    (url: string | URL, init?: Parameters<typeof global.fetch>[1]) =>
+      fetchFn(typeof url === 'string' ? url : url.toString(), init),
   RNStreamableHTTPClientTransport: jest.fn().mockImplementation(() => ({
     close: mockTransportClose,
     onmessage: null,
@@ -113,6 +118,7 @@ describe('McpClientService', () => {
         expect(RNStreamableHTTPClientTransport).toHaveBeenCalledWith(server.baseUrl, expect.any(Object))
         const transportOptions = (RNStreamableHTTPClientTransport as jest.Mock).mock.calls[0][1]
         expect(transportOptions).not.toHaveProperty('manualAuthOnly')
+        expect(transportOptions.fetch).toBe(mcpExpoNativeFetch)
         expect(mockConnect).toHaveBeenCalledTimes(1)
         expect(client).toBeDefined()
       })
@@ -513,13 +519,28 @@ describe('McpClientService', () => {
       it('should return connected: true when server is reachable', async () => {
         const server = createMockServer()
 
-        mockListTools.mockResolvedValueOnce({ tools: [] })
+        mockListTools.mockResolvedValueOnce({
+          tools: [
+            {
+              name: 'search',
+              description: 'Search the web',
+              inputSchema: { type: 'object', properties: {} }
+            }
+          ]
+        })
 
         const result = await mcpClientService.checkConnectivity(server)
+        const tools = await mcpClientService.listTools(server)
 
         expect(result.connected).toBe(true)
         expect(result.error).toBeUndefined()
         expect(result.errorCode).toBeUndefined()
+        expect(tools).toEqual([
+          expect.objectContaining({ name: 'search', serverId: server.id, serverName: server.name })
+        ])
+        // The connectivity check warmed the exact converted-tool cache used
+        // by Agent discovery, so the second lookup does not hit the network.
+        expect(mockListTools).toHaveBeenCalledTimes(1)
       })
 
       it('should return connected: false with error details when server is unreachable', async () => {
