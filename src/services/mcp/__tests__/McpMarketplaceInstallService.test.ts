@@ -176,9 +176,22 @@ describe('McpMarketplaceInstallService', () => {
       server: candidate,
       tools: [],
       attachedToAssistant: true,
-      toolDiscoveryFailed: true
+      toolDiscoveryFailed: true,
+      toolDiscoveryError: 'offline'
     })
     expect(dependencies.assistantService.updateAssistant).toHaveBeenCalled()
+  })
+
+  it('redacts credentials before returning a tool discovery error to the UI', async () => {
+    jest
+      .mocked(dependencies.mcpClientService.listTools)
+      .mockRejectedValueOnce(new Error('Authorization: Bearer super-secret-token'))
+    const service = new McpMarketplaceInstallService(dependencies)
+
+    const result = await service.install(candidate, { assistantId: assistant.id })
+
+    expect(result.toolDiscoveryError).toContain('[REDACTED]')
+    expect(result.toolDiscoveryError).not.toContain('super-secret-token')
   })
 
   it('reuses a manually added server with the same normalized endpoint', async () => {

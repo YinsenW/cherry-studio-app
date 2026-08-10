@@ -1,5 +1,6 @@
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { Client } from '@modelcontextprotocol/client'
 
+import { RNStreamableHTTPClientTransport } from '../packages/react-native-streamable-http/src/index'
 import { PUBLIC_MCP_PRESETS } from '../src/config/mcpPresets'
 
 const CALL_TIMEOUT_MS = 30_000
@@ -62,10 +63,7 @@ async function verifyPreset(preset: (typeof PUBLIC_MCP_PRESETS)[number]) {
   )
 
   try {
-    await withTimeout(
-      client.connect(new StreamableHTTPClientTransport(new URL(preset.baseUrl))),
-      `${preset.name} initialize`
-    )
+    await withTimeout(client.connect(new RNStreamableHTTPClientTransport(preset.baseUrl)), `${preset.name} initialize`)
     const listed = await withTimeout(client.listTools(), `${preset.name} tools/list`)
     const probe = READ_ONLY_PROBES[preset.id]
     if (!probe) throw new Error(`Missing read-only verification probe for ${preset.id}`)

@@ -36,6 +36,18 @@ export interface McpMarketplaceInstallResult {
   assistantAttachmentRequested: boolean
   attachedToAssistant: boolean
   toolDiscoveryFailed: boolean
+  /** Sanitized transport/protocol error suitable for showing in the UI. */
+  toolDiscoveryError?: string
+}
+
+function sanitizeDiscoveryError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/((?:api[_-]?key|authorization|token)["']?\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300)
 }
 
 function normalizeEndpoint(value: string | undefined): string | undefined {
@@ -129,17 +141,22 @@ export class McpMarketplaceInstallService {
 
     let tools: MCPTool[] = []
     let toolDiscoveryFailed = false
+    let toolDiscoveryError: string | undefined
     try {
       tools =
         persisted.type === 'inMemory'
           ? await this.dependencies.mcpService.getMcpTools(persisted.id, true)
           : await this.dependencies.mcpClientService.listTools(persisted)
-    } catch {
+    } catch (error) {
       // The server is still installed so OAuth or temporary connectivity can
       // be repaired from its detail screen. Do not turn a successful database
       // write into a misleading total-install failure.
       toolDiscoveryFailed = true
-      logger.warn('Marketplace MCP was installed but initial tool discovery failed', { serverId: persisted.id })
+      toolDiscoveryError = sanitizeDiscoveryError(error) || 'Unknown MCP discovery error'
+      logger.warn('Marketplace MCP was installed but initial tool discovery failed', {
+        serverId: persisted.id,
+        error: toolDiscoveryError
+      })
     }
 
     const assistantAttachmentRequested = Boolean(options.assistantId)
@@ -172,7 +189,8 @@ export class McpMarketplaceInstallService {
       alreadyInstalled,
       assistantAttachmentRequested,
       attachedToAssistant,
-      toolDiscoveryFailed
+      toolDiscoveryFailed,
+      toolDiscoveryError
     }
   }
 }
