@@ -1,6 +1,5 @@
 // This file is required for Expo/React Native SQLite migrations - https://orm.drizzle.team/quick-sqlite/expo
 
-import journal from './meta/_journal.json';
 import m0000 from './0000_redundant_silver_surfer.sql';
 import m0001 from './0001_ordinary_stryfe.sql';
 import m0002 from './0002_omniscient_leech.sql';
@@ -18,6 +17,7 @@ import m0013 from './0013_lush_madame_web.sql';
 import m0014 from './0014_gray_leopardon.sql';
 import m0015 from './0015_furry_old_lace.sql';
 import m0016 from './0016_sad_maverick.sql';
+import journal from './meta/_journal.json';
 
   export default {
     journal,
@@ -41,4 +41,3 @@ m0015,
 m0016
     }
   }
-  

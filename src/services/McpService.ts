@@ -343,8 +343,16 @@ export class McpService {
       // Fetch tools if not cached
       if (tools.length === 0) {
         if (mcpServer.type === 'inMemory') {
-          // Built-in tools from static config
-          tools = BUILTIN_TOOLS[mcpServer.id] || []
+          // Built-in definitions are shared static metadata. Bind every tool
+          // to the persisted server before caching it; historical definitions
+          // used generated placeholder server IDs, which made Agent discovery
+          // look up a server that could never exist.
+          tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
+            ...tool,
+            serverId: mcpServer.id,
+            serverName: mcpServer.name,
+            isBuiltIn: true
+          }))
         } else if (mcpServer.type === 'streamableHttp') {
           // External server - fetch via MCP protocol
           if (!mcpServer.baseUrl) {
@@ -363,7 +371,12 @@ export class McpService {
           return []
         } else {
           // Unknown type - try static config as fallback
-          tools = BUILTIN_TOOLS[mcpServer.id] || []
+          tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
+            ...tool,
+            serverId: mcpServer.id,
+            serverName: mcpServer.name,
+            isBuiltIn: true
+          }))
         }
 
         // Cache all tools (unfiltered)
@@ -597,6 +610,7 @@ export class McpService {
     this.allMcpServersCache.clear()
     this.allMcpServersCacheTimestamp = null
     this.mcpCache.clear()
+    this.toolsCache.clear()
     this.accessOrder = []
     logger.info('All MCP servers cache invalidated')
     this.notifyAllMcpServersSubscribers()

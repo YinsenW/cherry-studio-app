@@ -10,12 +10,11 @@ import Text from '@/componentsV2/base/Text'
 import { X } from '@/componentsV2/icons/LucideIcon'
 import XStack from '@/componentsV2/layout/XStack'
 import YStack from '@/componentsV2/layout/YStack'
-import { useMcpTools } from '@/hooks/useMcp'
+import { useMcpTools, useMcpToolsPreview } from '@/hooks/useMcp'
 import { useTheme } from '@/hooks/useTheme'
 import { useToast } from '@/hooks/useToast'
-import { assistantService } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
-import { mcpService } from '@/services/McpService'
+import { mcpMarketplaceInstallService } from '@/services/mcp/McpMarketplaceInstallService'
 import type { MCPServer } from '@/types/mcp'
 import { isIOS, isIOS26 } from '@/utils/device'
 
@@ -68,7 +67,21 @@ const McpServerItemSheet: React.FC = () => {
   )
   const [mode, setMode] = useState<McpServerItemSheetMode>(currentMode)
   const [assistantId, setAssistantId] = useState<string | undefined>(currentAssistantId)
-  const { tools, isLoading } = useMcpTools(selectedMcp?.id || '', true)
+  const isRemotePreview = mode === 'preview' && selectedMcp?.type === 'streamableHttp'
+  const { tools: persistedTools, isLoading: isPersistedToolsLoading } = useMcpTools(
+    isRemotePreview ? '' : selectedMcp?.id || '',
+    true
+  )
+  const {
+    tools: previewTools,
+    isLoading: isPreviewToolsLoading,
+    fetchTools: fetchPreviewTools
+  } = useMcpToolsPreview(
+    isRemotePreview ? selectedMcp?.baseUrl : undefined,
+    isRemotePreview ? selectedMcp?.headers : undefined
+  )
+  const tools = isRemotePreview ? previewTools : persistedTools
+  const isLoading = isRemotePreview ? isPreviewToolsLoading : isPersistedToolsLoading
   // Keep a local copy so switch updates reflect immediately
   const [localDisabledTools, setLocalDisabledTools] = useState<string[]>([])
   const [isAdding, setIsAdding] = useState(false)
@@ -91,6 +104,11 @@ const McpServerItemSheet: React.FC = () => {
     // sync local disabled tools with current selected MCP
     setLocalDisabledTools(selectedMcp.disabledTools ?? [])
   }, [selectedMcp])
+
+  useEffect(() => {
+    if (!isVisible || !isRemotePreview || !selectedMcp?.baseUrl) return
+    void fetchPreviewTools()
+  }, [fetchPreviewTools, isRemotePreview, isVisible, selectedMcp?.baseUrl])
 
   useEffect(() => {
     if (!isVisible) return
@@ -134,26 +152,33 @@ const McpServerItemSheet: React.FC = () => {
     if (!selectedMcp || isAdding) return
     try {
       setIsAdding(true)
-      const installedServer = await mcpService.createMcpServer({
-        ...selectedMcp,
-        isActive: true
-      })
+      const result = await mcpMarketplaceInstallService.install(selectedMcp, { assistantId })
 
-      if (assistantId) {
-        const assistant = await assistantService.getAssistant(assistantId)
-        if (assistant) {
-          const mcpServers = [
-            ...(assistant.mcpServers ?? []).filter(server => server.id !== installedServer.id),
-            installedServer
-          ]
-          await assistantService.updateAssistant(assistant.id, { mcpServers })
-        }
+      if (result.assistantAttachmentRequested && !result.attachedToAssistant) {
+        toast.show(t('mcp.market.add.assistant_attach_failed', { mcp_name: result.server.name }), {
+          color: 'orange',
+          duration: 4000
+        })
+      } else if (result.toolDiscoveryFailed || result.tools.length === 0) {
+        toast.show(t('mcp.market.add.no_tools', { mcp_name: result.server.name }), {
+          color: 'orange',
+          duration: 4000
+        })
+      } else if (result.attachedToAssistant) {
+        toast.show(
+          t('mcp.market.add.success_agent', {
+            mcp_name: result.server.name,
+            count: result.tools.length
+          }),
+          { duration: 3000 }
+        )
+      } else {
+        toast.show(t('mcp.market.add.success', { mcp_name: result.server.name }))
       }
-
-      toast.show(t('mcp.market.add.success', { mcp_name: selectedMcp.name }))
       dismissMcpServerItemSheet()
     } catch (error) {
       logger.error('Failed to add MCP server', error as Error)
+      toast.show(t('mcp.server.add_failed'), { color: 'red', duration: 3000 })
     } finally {
       setIsAdding(false)
     }

@@ -11,7 +11,7 @@ const logger = loggerService.withContext('McpMarketplaceInstallService')
 
 type McpServiceDependency = Pick<
   typeof mcpService,
-  'createMcpServer' | 'getAllMcpServers' | 'getMcpServer' | 'invalidateToolsCache' | 'updateMcpServer'
+  'createMcpServer' | 'getAllMcpServers' | 'getMcpServer' | 'getMcpTools' | 'invalidateToolsCache' | 'updateMcpServer'
 >
 
 type AssistantServiceDependency = Pick<typeof assistantService, 'getAssistant' | 'updateAssistant'>
@@ -38,14 +38,33 @@ export interface McpMarketplaceInstallResult {
   toolDiscoveryFailed: boolean
 }
 
+function normalizeEndpoint(value: string | undefined): string | undefined {
+  if (!value) return undefined
+
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    if (url.pathname.length > 1) {
+      url.pathname = url.pathname.replace(/\/+$/, '')
+    }
+    return url.toString()
+  } catch {
+    return value.trim().replace(/\/+$/, '')
+  }
+}
+
 function isSameMarketplaceServer(existing: MCPServer, candidate: MCPServer): boolean {
   if (existing.id === candidate.id) return true
 
   if (candidate.provider && candidate.providerUrl) {
-    return existing.provider === candidate.provider && existing.providerUrl === candidate.providerUrl
+    if (existing.provider === candidate.provider && existing.providerUrl === candidate.providerUrl) {
+      return true
+    }
   }
 
-  return Boolean(candidate.baseUrl && existing.baseUrl === candidate.baseUrl)
+  const existingEndpoint = normalizeEndpoint(existing.baseUrl)
+  const candidateEndpoint = normalizeEndpoint(candidate.baseUrl)
+  return Boolean(candidateEndpoint && existingEndpoint === candidateEndpoint)
 }
 
 /**
@@ -66,13 +85,17 @@ export class McpMarketplaceInstallService {
     candidate: MCPServer,
     options: McpMarketplaceInstallOptions = {}
   ): Promise<McpMarketplaceInstallResult> {
+    // Adding a market preset is also an explicit enable action. Presets stay
+    // inactive until this point so an app update never adds network access to
+    // an Agent behind the user's back.
+    const activeCandidate: MCPServer = { ...candidate, isActive: true }
     const existingServers = await this.dependencies.mcpService.getAllMcpServers()
-    const existing = existingServers.find(server => isSameMarketplaceServer(server, candidate))
+    const existing = existingServers.find(server => isSameMarketplaceServer(server, activeCandidate))
     const alreadyInstalled = Boolean(existing)
 
     let installed = existing
     if (!installed) {
-      installed = await this.dependencies.mcpService.createMcpServer(candidate)
+      installed = await this.dependencies.mcpService.createMcpServer(activeCandidate)
     } else {
       // Re-installation must refresh endpoint/header configuration. Otherwise
       // correcting a token or a registry deployment URL would keep using the
@@ -81,10 +104,14 @@ export class McpMarketplaceInstallService {
       // overwrite them.
       const refreshed: MCPServer = {
         ...installed,
-        ...candidate,
+        ...activeCandidate,
         id: installed.id,
-        headers: candidate.headers,
-        installedAt: installed.installedAt ?? candidate.installedAt,
+        headers: activeCandidate.headers,
+        disabledTools: installed.disabledTools ?? activeCandidate.disabledTools,
+        disabledAutoApproveTools: installed.disabledAutoApproveTools ?? activeCandidate.disabledAutoApproveTools,
+        isTrusted: installed.isTrusted ?? activeCandidate.isTrusted,
+        trustedAt: installed.trustedAt ?? activeCandidate.trustedAt,
+        installedAt: installed.installedAt ?? activeCandidate.installedAt,
         isActive: true
       }
       const { id: _serverId, ...updates } = refreshed
@@ -103,7 +130,10 @@ export class McpMarketplaceInstallService {
     let tools: MCPTool[] = []
     let toolDiscoveryFailed = false
     try {
-      tools = await this.dependencies.mcpClientService.listTools(persisted)
+      tools =
+        persisted.type === 'inMemory'
+          ? await this.dependencies.mcpService.getMcpTools(persisted.id, true)
+          : await this.dependencies.mcpClientService.listTools(persisted)
     } catch {
       // The server is still installed so OAuth or temporary connectivity can
       // be repaired from its detail screen. Do not turn a successful database

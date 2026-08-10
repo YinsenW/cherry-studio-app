@@ -3,6 +3,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Tool } from 'ai'
 
 import { getActualProvider } from '@/aiCore/provider/providerConfig'
+import { BUILTIN_TOOLS, type BuiltinMcpId } from '@/config/mcp'
 import { isFunctionCallingModel } from '@/config/models'
 import { fetchTopicNaming } from '@/services/ApiService'
 import { assistantService, getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
@@ -186,10 +187,19 @@ async function loadAgentTools(
     )
   ])
 
+  // Once an in-memory server is explicitly attached, its MCP configuration
+  // (active state and disabledTools) becomes authoritative. Do not inject a
+  // second unconditional SystemTool copy that would bypass those controls.
+  const mcpManagedBuiltInToolNames = new Set(
+    (assistant.mcpServers ?? []).flatMap(server =>
+      (BUILTIN_TOOLS[server.id as BuiltinMcpId] ?? []).map(tool => tool.name)
+    )
+  )
   const builtInTools: AgentTool[] = []
-  for (const record of records) {
+  for (const [recordIndex, record] of records.entries()) {
     for (const [name, tool] of Object.entries(record)) {
       if (!tool) continue
+      if (recordIndex === 0 && mcpManagedBuiltInToolNames.has(name)) continue
       try {
         builtInTools.push(aiSdkToolToAgentTool(name, tool))
       } catch (error) {
