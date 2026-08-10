@@ -18,17 +18,10 @@ export const findAllBlocks = async (message: Message): Promise<MessageBlock[]> =
     return []
   }
 
-  const allBlocks: MessageBlock[] = []
-
-  for (const blockId of message.blocks) {
-    const block = await messageBlockDatabase.getBlockById(blockId)
-
-    if (block) {
-      allBlocks.push(block)
-    }
-  }
-
-  return allBlocks
+  // Each lookup is independent. Preserve the declared block order while
+  // avoiding one database round trip per sequential await on the send path.
+  const blocks = await Promise.all(message.blocks.map(blockId => messageBlockDatabase.getBlockById(blockId)))
+  return blocks.filter((block): block is MessageBlock => block !== null && block !== undefined)
 }
 
 /**

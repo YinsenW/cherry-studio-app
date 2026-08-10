@@ -31,6 +31,7 @@ import type { McpStackParamList } from '@/navigators/McpStackNavigator'
 import { loggerService } from '@/services/LoggerService'
 import { attachMcpServersToAssistant } from '@/services/mcp/McpAssistantBindingService'
 import { mcpClientService } from '@/services/mcp/McpClientService'
+import { mcpService } from '@/services/McpService'
 import type { ConnectivityResult } from '@/types/mcp'
 
 const logger = loggerService.withContext('McpDetailScreen')
@@ -120,6 +121,7 @@ export default function McpDetailScreen() {
       await updateMcpServer({ isActive: checked })
       if (checked) {
         await attachMcpServersToAssistant(currentTopic?.assistantId, [{ ...mcpServer, isActive: true }])
+        void mcpService.getMcpTools(mcpServer.id)
       }
     } catch (error) {
       logger.error('Failed to update MCP server active state', error as Error)

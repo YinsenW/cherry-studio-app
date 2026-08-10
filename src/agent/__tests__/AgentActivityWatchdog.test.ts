@@ -37,6 +37,26 @@ describe('AgentActivityWatchdog', () => {
     watchdog.dispose()
   })
 
+  it('does not recreate the native timer for every streamed token', () => {
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout')
+    const watchdog = new AgentActivityWatchdog({
+      idleTimeoutMs: 120_000,
+      onTimeout: jest.fn(),
+      appState: new FakeAppState()
+    })
+
+    try {
+      watchdog.start()
+      const callsAfterStart = setTimeoutSpy.mock.calls.length
+      for (let index = 0; index < 10_000; index += 1) watchdog.recordActivity()
+
+      expect(setTimeoutSpy).toHaveBeenCalledTimes(callsAfterStart)
+    } finally {
+      watchdog.dispose()
+      setTimeoutSpy.mockRestore()
+    }
+  })
+
   it('does not count time spent in the background as inactivity', () => {
     const appState = new FakeAppState()
     const onTimeout = jest.fn()

@@ -69,6 +69,10 @@ export default function McpScreen() {
 
     if (isActive) {
       await attachMcpServersToAssistant(currentTopic?.assistantId, [{ ...mcp, isActive }])
+      // Start protocol discovery as soon as the user enables the server. This
+      // is intentionally not awaited by the switch interaction or navigation;
+      // McpService deduplicates it with a message sent immediately afterwards.
+      void mcpService.getMcpTools(mcp.id)
     }
   }
 
@@ -95,6 +99,9 @@ export default function McpScreen() {
     presentMcpJsonImportSheet(async servers => {
       const created = await mcpService.createMcpServers(servers)
       await attachMcpServersToAssistant(currentTopic?.assistantId, created)
+      void Promise.allSettled(
+        created.filter(server => server.isActive).map(server => mcpService.getMcpTools(server.id, true))
+      )
       toast.show(t('mcp.server.import.success', { count: created.length }), { duration: 3000 })
     })
   }

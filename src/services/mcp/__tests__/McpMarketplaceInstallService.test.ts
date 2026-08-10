@@ -13,6 +13,7 @@ jest.mock('@/services/AssistantService', () => ({
 
 jest.mock('@/services/McpService', () => ({
   mcpService: {
+    cacheMcpTools: jest.fn(),
     createMcpServer: jest.fn(),
     getAllMcpServers: jest.fn(),
     getMcpServer: jest.fn(),
@@ -69,6 +70,7 @@ describe('McpMarketplaceInstallService', () => {
 
     dependencies = {
       mcpService: {
+        cacheMcpTools: jest.fn(),
         getAllMcpServers: jest.fn(async () => (storedServer ? [storedServer] : [])),
         createMcpServer: jest.fn(async server => {
           storedServer = server
@@ -102,6 +104,7 @@ describe('McpMarketplaceInstallService', () => {
     expect(dependencies.mcpService.createMcpServer).toHaveBeenCalledWith(candidate)
     expect(dependencies.mcpService.getMcpServer).toHaveBeenCalledWith(candidate.id)
     expect(dependencies.mcpClientService.listTools).toHaveBeenCalledWith(candidate)
+    expect(dependencies.mcpService.cacheMcpTools).toHaveBeenCalledWith(candidate.id, exaTools)
     expect(dependencies.assistantService.updateAssistant).toHaveBeenCalledWith(assistant.id, {
       mcpServers: [candidate]
     })
@@ -180,6 +183,7 @@ describe('McpMarketplaceInstallService', () => {
       toolDiscoveryError: 'offline'
     })
     expect(dependencies.assistantService.updateAssistant).toHaveBeenCalled()
+    expect(dependencies.mcpService.cacheMcpTools).not.toHaveBeenCalled()
   })
 
   it('redacts credentials before returning a tool discovery error to the UI', async () => {
@@ -240,6 +244,7 @@ describe('McpMarketplaceInstallService', () => {
 
     expect(dependencies.mcpService.createMcpServer).toHaveBeenCalledWith({ ...builtin, isActive: true })
     expect(dependencies.mcpService.getMcpTools).toHaveBeenCalledWith(builtin.id, true)
+    expect(dependencies.mcpService.cacheMcpTools).toHaveBeenCalledWith(builtin.id, builtinTools)
     expect(dependencies.mcpClientService.listTools).not.toHaveBeenCalled()
     expect(result).toMatchObject({
       tools: builtinTools,

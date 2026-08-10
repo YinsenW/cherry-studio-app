@@ -11,7 +11,13 @@ const logger = loggerService.withContext('McpMarketplaceInstallService')
 
 type McpServiceDependency = Pick<
   typeof mcpService,
-  'createMcpServer' | 'getAllMcpServers' | 'getMcpServer' | 'getMcpTools' | 'invalidateToolsCache' | 'updateMcpServer'
+  | 'cacheMcpTools'
+  | 'createMcpServer'
+  | 'getAllMcpServers'
+  | 'getMcpServer'
+  | 'getMcpTools'
+  | 'invalidateToolsCache'
+  | 'updateMcpServer'
 >
 
 type AssistantServiceDependency = Pick<typeof assistantService, 'getAssistant' | 'updateAssistant'>
@@ -147,6 +153,11 @@ export class McpMarketplaceInstallService {
         persisted.type === 'inMemory'
           ? await this.dependencies.mcpService.getMcpTools(persisted.id, true)
           : await this.dependencies.mcpClientService.listTools(persisted)
+      // Marketplace discovery uses the protocol client directly so the UI can
+      // surface transport errors. Mirror every successful tools/list response
+      // into McpService's durable snapshot; the first Agent message should not
+      // reconnect to the same server it just installed.
+      this.dependencies.mcpService.cacheMcpTools(persisted.id, tools)
     } catch (error) {
       // The server is still installed so OAuth or temporary connectivity can
       // be repaired from its detail screen. Do not turn a successful database

@@ -10,9 +10,9 @@ import { File } from 'expo-file-system'
 import { isVisionModel } from '@/config/models'
 import { loggerService } from '@/services/LoggerService'
 import type { Model } from '@/types/assistant'
-import type { Message, ToolMessageBlock } from '@/types/message'
+import type { ImageMessageBlock, Message, MessageBlock, ToolMessageBlock } from '@/types/message'
 import { AssistantMessageStatus, MessageBlockType } from '@/types/message'
-import { findAllBlocks, findImageBlocks, getFileContent, getMainTextContent } from '@/utils/messageUtils/find'
+import { findAllBlocks } from '@/utils/messageUtils/find'
 
 import {
   attachmentHistoryGroupPath,
@@ -37,14 +37,34 @@ export async function messageToPiUserMessage(
   model: Model,
   options: AgentMessageConversionOptions = {}
 ): Promise<UserMessage> {
+  return messageBlocksToPiUserMessage(message, model, await findAllBlocks(message), options)
+}
+
+async function messageBlocksToPiUserMessage(
+  message: Message,
+  model: Model,
+  blocks: MessageBlock[],
+  options: AgentMessageConversionOptions
+): Promise<UserMessage> {
   const textParts: string[] = []
   const content: (TextContent | ImageContent)[] = []
-  const mainText = await getMainTextContent(message)
+  const mainText = blocks
+    .filter(block => block.type === MessageBlockType.MAIN_TEXT)
+    .map(block => block.content)
+    .join('\n\n')
   if (mainText.trim()) {
     textParts.push(mainText)
   }
 
-  const files = [...new Map((await getFileContent(message)).map(file => [file.id, file])).values()]
+  const files = [
+    ...new Map(
+      blocks.flatMap(block => {
+        if (block.type === MessageBlockType.FILE) return [[block.file.id, block.file] as const]
+        if (block.type === MessageBlockType.IMAGE && block.file) return [[block.file.id, block.file] as const]
+        return []
+      })
+    ).values()
+  ]
   if (files.length > 0) {
     const attachments = buildMountedAttachments(options.attachmentGroupPath ?? 'current', files, message.id)
     textParts.push(
@@ -59,7 +79,7 @@ export async function messageToPiUserMessage(
     content.push({ type: 'text', text: textParts.join('\n\n') })
   }
 
-  const imageBlocks = await findImageBlocks(message)
+  const imageBlocks = blocks.filter((block): block is ImageMessageBlock => block.type === MessageBlockType.IMAGE)
   const includeImages = options.includeImages ?? true
   if (imageBlocks.length > 0 && !includeImages) {
     const unmountedImages = imageBlocks.filter(block => !block.file).length
@@ -139,8 +159,7 @@ export async function messageToPiUserMessage(
  * - 历史图片不重复编码；历史附件只保留只读挂载路径
  * - 工具历史以文本摘要形式注入，让 agent 知道之前执行过什么
  */
-async function getToolSummary(message: Message): Promise<string[]> {
-  const blocks = await findAllBlocks(message)
+function getToolSummary(blocks: MessageBlock[]): string[] {
   const parts: string[] = []
   for (const block of blocks) {
     if (block.type !== MessageBlockType.TOOL) continue
@@ -169,56 +188,60 @@ export async function messagesToPiContext(
   model: Model,
   options: Pick<AgentMessageConversionOptions, 'attachmentToolsAvailable'> = {}
 ): Promise<PiMessage[]> {
-  const pi: PiMessage[] = []
+  const converted = await Promise.all(
+    messages.map(async (msg): Promise<PiMessage | null> => {
+      if (!msg.blocks?.length) return null
+      const blocks = await findAllBlocks(msg)
+      if (blocks.length === 0) return null
 
-  for (const msg of messages) {
-    if (!msg.blocks?.length) continue
-
-    if (msg.role === 'user') {
-      const userMessage = await messageToPiUserMessage(msg, model, {
-        attachmentGroupPath: attachmentHistoryGroupPath(msg.id),
-        attachmentScope: 'history',
-        attachmentToolsAvailable: options.attachmentToolsAvailable,
-        includeImages: false
-      })
-      if (userMessage.content.length > 0) {
-        pi.push(userMessage)
+      if (msg.role === 'user') {
+        const userMessage = await messageBlocksToPiUserMessage(msg, model, blocks, {
+          attachmentGroupPath: attachmentHistoryGroupPath(msg.id),
+          attachmentScope: 'history',
+          attachmentToolsAvailable: options.attachmentToolsAvailable,
+          includeImages: false
+        })
+        return userMessage.content.length > 0 ? userMessage : null
       }
-      continue
-    }
 
-    if (
-      msg.role === 'assistant' &&
-      (msg.status === AssistantMessageStatus.SUCCESS || msg.status === AssistantMessageStatus.PAUSED)
-    ) {
-      const text = await getMainTextContent(msg)
-      const toolParts = await getToolSummary(msg)
-      const content = [
-        ...(text ? [{ type: 'text' as const, text }] : []),
-        ...toolParts.map(t => ({ type: 'text' as const, text: t }))
-      ]
-      if (content.length === 0) continue
+      if (
+        msg.role === 'assistant' &&
+        (msg.status === AssistantMessageStatus.SUCCESS || msg.status === AssistantMessageStatus.PAUSED)
+      ) {
+        const text = blocks
+          .filter(block => block.type === MessageBlockType.MAIN_TEXT)
+          .map(block => block.content)
+          .join('\n\n')
+        const toolParts = getToolSummary(blocks)
+        const content = [
+          ...(text ? [{ type: 'text' as const, text }] : []),
+          ...toolParts.map(t => ({ type: 'text' as const, text: t }))
+        ]
+        if (content.length === 0) return null
 
-      const assistantMsg: AssistantMessage = {
-        role: 'assistant',
-        content,
-        api: 'custom',
-        provider: model.provider,
-        model: model.id,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-        },
-        stopReason: 'stop',
-        timestamp: msg.createdAt
+        const assistantMsg: AssistantMessage = {
+          role: 'assistant',
+          content,
+          api: 'custom',
+          provider: model.provider,
+          model: model.id,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+          },
+          stopReason: 'stop',
+          timestamp: msg.createdAt
+        }
+        return assistantMsg
       }
-      pi.push(assistantMsg)
-    }
-  }
 
-  return pi
+      return null
+    })
+  )
+
+  return converted.filter((message): message is PiMessage => message !== null)
 }

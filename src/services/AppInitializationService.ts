@@ -119,6 +119,13 @@ const LATEST_APP_DATA_VERSION = APP_DATA_MIGRATIONS[APP_DATA_MIGRATIONS.length -
 let activeInitialization: Promise<void> | null = null
 let conversationStateReconciled = false
 
+function warmActiveMcpToolsInBackground(): void {
+  void mcpService
+    .getActiveMcpServers()
+    .then(servers => Promise.allSettled(servers.map(server => mcpService.getMcpTools(server.id))))
+    .catch(error => logger.warn('Unable to prewarm active MCP tools:', error as Error))
+}
+
 export function resetAppInitializationState(): void {
   preferenceService.clearCache()
   assistantService.clearCache()
@@ -227,6 +234,7 @@ export async function runAppDataMigrations(): Promise<void> {
 
   activeInitialization = runAppDataMigrationsImpl()
     .then(reconcileConversationStateOnce)
+    .then(warmActiveMcpToolsInBackground)
     .finally(() => {
       activeInitialization = null
     })

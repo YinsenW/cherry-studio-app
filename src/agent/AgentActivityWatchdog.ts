@@ -31,6 +31,7 @@ export class AgentActivityWatchdog {
   private timer: ReturnType<typeof setTimeout> | null = null
   private subscription: AppStateSubscription | null = null
   private readonly pauseReasons = new Set<string>()
+  private lastActivityAt: number | null = null
   private running = false
   private timedOut = false
 
@@ -56,12 +57,17 @@ export class AgentActivityWatchdog {
       return
     }
 
-    this.arm()
+    this.resetWindow()
   }
 
   recordActivity(): void {
     if (!this.running || this.timedOut || this.pauseReasons.size > 0) return
-    this.arm()
+
+    // Do not clear and recreate a native timer for every token. Provider
+    // streams can deliver hundreds of parts per second on a fast model; a
+    // timestamp write keeps that hot path constant-time. The existing timer
+    // checks the timestamp at its deadline and reschedules only when needed.
+    this.lastActivityAt = Date.now()
   }
 
   setIdleTimeoutMs(timeoutMs: number): void {
@@ -70,13 +76,16 @@ export class AgentActivityWatchdog {
     }
 
     this.idleTimeoutMs = timeoutMs
-    this.recordActivity()
+    if (this.running && !this.timedOut && this.pauseReasons.size === 0) {
+      this.resetWindow()
+    }
   }
 
   pause(reason: string): void {
     if (!this.running || this.timedOut) return
     this.pauseReasons.add(reason)
     this.clearTimer()
+    this.lastActivityAt = null
   }
 
   resume(reason: string): void {
@@ -85,7 +94,7 @@ export class AgentActivityWatchdog {
 
     // Time spent paused is intentionally excluded from the inactivity
     // window. Resume with a full fresh budget.
-    this.arm()
+    this.resetWindow()
   }
 
   dispose(): void {
@@ -94,6 +103,7 @@ export class AgentActivityWatchdog {
     this.subscription?.remove()
     this.subscription = null
     this.pauseReasons.clear()
+    this.lastActivityAt = null
   }
 
   private readonly handleAppStateChange = (nextState: AppStateStatus): void => {
@@ -109,14 +119,27 @@ export class AgentActivityWatchdog {
     }
   }
 
-  private arm(): void {
+  private resetWindow(): void {
+    this.lastActivityAt = Date.now()
+    this.arm(this.idleTimeoutMs)
+  }
+
+  private arm(delayMs: number): void {
     this.clearTimer()
     this.timer = setTimeout(() => {
       if (!this.running || this.timedOut || this.pauseReasons.size > 0) return
+
+      const lastActivityAt = this.lastActivityAt ?? Date.now()
+      const remainingMs = this.idleTimeoutMs - (Date.now() - lastActivityAt)
+      if (remainingMs > 0) {
+        this.arm(remainingMs)
+        return
+      }
+
       this.timedOut = true
       this.timer = null
       this.onTimeout()
-    }, this.idleTimeoutMs)
+    }, delayMs)
   }
 
   private clearTimer(): void {
