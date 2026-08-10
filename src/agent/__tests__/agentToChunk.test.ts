@@ -2,6 +2,20 @@ import { createAgentEventToChunk } from '../agentToChunk'
 import { registerMcpAgentToolName } from '../mcpToolNames'
 
 describe('createAgentEventToChunk', () => {
+  it('does not emit a second placeholder when the response was created before slow setup', async () => {
+    const chunks: any[] = []
+    const adapter = createAgentEventToChunk(
+      chunk => {
+        chunks.push(chunk)
+      },
+      { responseAlreadyCreated: true }
+    )
+
+    await adapter({ type: 'agent_start' } as never)
+
+    expect(chunks).toEqual([])
+  })
+
   it('awaits and maps text and tool lifecycle events in order', async () => {
     const chunks: any[] = []
     const adapter = createAgentEventToChunk(async chunk => {

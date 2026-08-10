@@ -82,4 +82,13 @@ describe('fetchAssistantMcpTools', () => {
     expect(mockGetMcpServer).toHaveBeenCalledWith(server.id)
     expect(mockGetMcpTools).toHaveBeenCalledWith(server.id)
   })
+
+  it('does not let one stalled MCP server block Agent startup indefinitely', async () => {
+    mockGetMcpTools.mockImplementationOnce(() => new Promise(() => undefined))
+
+    const startedAt = Date.now()
+    await expect(fetchAssistantMcpTools(assistant, { perServerTimeoutMs: 5 })).resolves.toEqual([])
+
+    expect(Date.now() - startedAt).toBeLessThan(250)
+  })
 })

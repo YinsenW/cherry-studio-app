@@ -27,6 +27,33 @@ import { createStreamProcessor } from './StreamProcessingService'
 import { topicService } from './TopicService'
 
 const logger = loggerService.withContext('fetchChatCompletion')
+const ASSISTANT_MCP_DISCOVERY_TIMEOUT_MS = 8_000
+
+export type AssistantMcpDiscoveryOptions = {
+  perServerTimeoutMs?: number
+}
+
+async function getMcpToolsWithinStartupBudget(server: MCPServer, timeoutMs: number): Promise<MCPTool[]> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeoutResult = new Promise<MCPTool[]>(resolve => {
+    timeoutId = setTimeout(() => {
+      logger.warn(`MCP tool discovery exceeded the Agent startup budget for ${server.name}`, {
+        serverId: server.id,
+        timeoutMs
+      })
+      resolve([])
+    }, timeoutMs)
+  })
+
+  try {
+    // Do not abort the underlying discovery when the startup budget expires.
+    // It can still finish in the background and warm McpService's cache for
+    // the next turn, while this Agent request continues with the fast servers.
+    return await Promise.race([mcpService.getMcpTools(server.id), timeoutResult])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
 
 export async function fetchChatCompletion({
   messages,
@@ -270,8 +297,9 @@ export async function fetchTopicNaming(topicId: string, regenerate: boolean = fa
  * @param assistant - The assistant with MCP server configuration
  * @returns Array of enabled MCP tools
  */
-export async function fetchAssistantMcpTools(assistant: Assistant) {
+export async function fetchAssistantMcpTools(assistant: Assistant, options: AssistantMcpDiscoveryOptions = {}) {
   let mcpTools: MCPTool[] = []
+  const perServerTimeoutMs = options.perServerTimeoutMs ?? ASSISTANT_MCP_DISCOVERY_TIMEOUT_MS
 
   // Resolve exactly the server IDs persisted on this Assistant. Looking up
   // the global active-server list first can return a stale snapshot during
@@ -302,7 +330,7 @@ export async function fetchAssistantMcpTools(assistant: Assistant) {
           // - Builtin tools fetching
           // - Future MCP protocol integration
           // - Automatic filtering of disabledTools
-          return await mcpService.getMcpTools(mcpServer.id)
+          return await getMcpToolsWithinStartupBudget(mcpServer, perServerTimeoutMs)
         } catch (error) {
           logger.error(`Error fetching tools from MCP server ${mcpServer.name}:`, error as Error)
           return []

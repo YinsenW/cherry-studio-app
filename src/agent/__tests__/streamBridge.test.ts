@@ -233,6 +233,36 @@ describe('createStreamFn simulated provider stream', () => {
     )
   })
 
+  it('retries one provider response that contains neither text nor tool calls', async () => {
+    async function* emptyFullStream() {
+      // First attempt is an intermittent provider-side empty response.
+    }
+    async function* successfulRetryStream() {
+      yield { type: 'text-delta', text: '重试后响应' }
+    }
+    mockStreamText
+      .mockResolvedValueOnce({
+        fullStream: emptyFullStream(),
+        text: Promise.resolve(''),
+        toolCalls: Promise.resolve([])
+      })
+      .mockResolvedValueOnce({ fullStream: successfulRetryStream() })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+    expect(mockPush.mock.calls.filter(([event]) => event.type === 'start')).toHaveLength(1)
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'done',
+        message: expect.objectContaining({ content: [{ type: 'text', text: '重试后响应' }] })
+      })
+    )
+    expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }))
+  })
+
   it('reports an empty provider response instead of completing with no visible message', async () => {
     async function* emptyFullStream() {
       // Intentionally empty.
@@ -258,6 +288,7 @@ describe('createStreamFn simulated provider stream', () => {
       })
     )
     expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
   })
 
   it('treats a finishReason=error stream part as terminal failure', async () => {
