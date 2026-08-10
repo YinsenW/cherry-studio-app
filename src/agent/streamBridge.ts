@@ -57,7 +57,8 @@ export function createStreamFn(
   model: CherryModel,
   provider: CherryProvider,
   requestAssistant?: Assistant,
-  requestParamsBuilder: AgentRequestParamsBuilder = buildAgentRequestParams
+  requestParamsBuilder: AgentRequestParamsBuilder = buildAgentRequestParams,
+  onActivity?: () => void
 ): StreamFn {
   return (piModel, context, options) => {
     const stream = createAssistantMessageEventStream()
@@ -148,6 +149,12 @@ export function createStreamFn(
           ensureStreamStarted()
 
           for await (const chunk of result.fullStream) {
+            // AI SDK exposes more activity than visible text: reasoning
+            // tokens, streamed tool arguments, source metadata, and provider
+            // keep-alive parts may all arrive before the next pi event. Feed
+            // every raw part into the inactivity watchdog so an actively
+            // producing model is never mistaken for a silent connection.
+            onActivity?.()
             if (chunk.type === 'text-delta') {
               ensureStreamStarted()
               text += chunk.text

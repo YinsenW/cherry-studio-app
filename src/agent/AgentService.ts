@@ -24,6 +24,8 @@ export type AgentServiceOptions = {
   toolExecution?: ToolExecutionMode
   beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>
   afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>
+  /** Called for every raw provider stream part, including hidden reasoning/tool-input deltas. */
+  onActivity?: () => void
 }
 
 /**
@@ -59,7 +61,7 @@ export class AgentService {
         tools,
         ...(historyMessages ? { messages: historyMessages as never } : {})
       },
-      streamFn: createStreamFn(model, provider, requestAssistant),
+      streamFn: createStreamFn(model, provider, requestAssistant, undefined, options?.onActivity),
       toolExecution: options?.toolExecution ?? 'parallel',
       ...(options?.beforeToolCall ? { beforeToolCall: options.beforeToolCall } : {}),
       ...(options?.afterToolCall ? { afterToolCall: options.afterToolCall } : {})

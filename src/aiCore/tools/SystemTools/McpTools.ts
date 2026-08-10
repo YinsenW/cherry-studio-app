@@ -85,8 +85,24 @@ export async function createMcpTools(assistant: Assistant): Promise<AgentTool[]>
           label: `${server.name} · ${mcpTool.name}`,
           description: mcpTool.description ?? mcpTool.name,
           parameters: (mcpTool.inputSchema ?? { type: 'object', properties: {} }) as AgentTool['parameters'],
-          execute: async (callId, args, signal, _onUpdate) => {
-            const resp = await mcpClientService.callTool(server, mcpTool.name, args as Record<string, unknown>, signal)
+          execute: async (callId, args, signal, onUpdate) => {
+            const resp = await mcpClientService.callTool(
+              server,
+              mcpTool.name,
+              args as Record<string, unknown>,
+              signal,
+              progress => {
+                const progressText =
+                  progress.message?.trim() ||
+                  (typeof progress.total === 'number' && progress.total > 0
+                    ? `MCP progress: ${Math.min(100, Math.round((progress.progress / progress.total) * 100))}%`
+                    : `MCP progress: ${progress.progress}`)
+                onUpdate?.({
+                  content: [{ type: 'text', text: progressText }],
+                  details: { progress }
+                })
+              }
+            )
             const text = Array.isArray(resp.content)
               ? resp.content.map(c => ('text' in c ? String(c.text) : JSON.stringify(c))).join('\n')
               : JSON.stringify(resp)

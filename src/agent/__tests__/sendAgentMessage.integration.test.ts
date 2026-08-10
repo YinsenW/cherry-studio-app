@@ -64,7 +64,11 @@ const mockRuntimeSession = {
 }
 const mockRuntimeStartRun = jest.fn(async (..._args: unknown[]) => mockRuntimeSession)
 const mockGetLatestAssistant = jest.fn(async (_assistantId: string): Promise<Assistant | null> => null)
-let mockAgentScenario: 'success' | 'error' | 'missing-terminal' | 'invisible-success' = 'success'
+const mockAgentAbort = jest.fn()
+let promptStartedPromise: Promise<void>
+let resolvePromptStarted: () => void
+let mockAgentScenario: 'success' | 'error' | 'missing-terminal' | 'invisible-success' | 'long-active' | 'long-tool' =
+  'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -166,6 +170,53 @@ class MockAgentService {
             .map(part => part.text ?? '')
             .join('')
     )
+    resolvePromptStarted()
+
+    const emit = async (event: unknown) => {
+      for (const listener of this.listeners) {
+        await listener(event)
+      }
+    }
+
+    if (mockAgentScenario === 'long-active') {
+      await emit({ type: 'agent_start' })
+      for (const text of ['第一段', '第一段第二段', '第一段第二段第三段']) {
+        await new Promise(resolve => setTimeout(resolve, 110_000))
+        await emit({
+          type: 'message_update',
+          assistantMessageEvent: {
+            type: 'text_delta',
+            partial: { content: [{ type: 'text', text }] }
+          }
+        })
+      }
+      await emit({
+        type: 'message_end',
+        message: { role: 'assistant', content: [{ type: 'text', text: '第一段第二段第三段' }] }
+      })
+      await emit({ type: 'agent_end', messages: [] })
+      return
+    }
+
+    if (mockAgentScenario === 'long-tool') {
+      await emit({ type: 'agent_start' })
+      await emit({
+        type: 'tool_execution_start',
+        toolName: 'long_running_tool',
+        toolCallId: 'long-tool-call',
+        args: {}
+      })
+      await new Promise(resolve => setTimeout(resolve, 4 * 60_000))
+      await emit({
+        type: 'tool_execution_end',
+        toolName: 'long_running_tool',
+        toolCallId: 'long-tool-call',
+        isError: false,
+        result: { content: [{ type: 'text', text: 'tool complete' }] }
+      })
+      await emit({ type: 'agent_end', messages: [{ role: 'assistant', content: [], stopReason: 'toolUse' }] })
+      return
+    }
 
     const events =
       mockAgentScenario === 'success'
@@ -219,14 +270,12 @@ class MockAgentService {
                 }
               ]
 
-    for (const event of events) {
-      for (const listener of this.listeners) {
-        await listener(event)
-      }
-    }
+    for (const event of events) await emit(event)
   }
 
-  abort() {}
+  abort() {
+    mockAgentAbort()
+  }
 }
 
 jest.mock('@database', () => ({
@@ -375,6 +424,9 @@ const makeUserMessage = (): { message: Message; blocks: MessageBlock[] } => {
 
 describe('sendAgentMessage simulated main flow', () => {
   beforeEach(() => {
+    promptStartedPromise = new Promise(resolve => {
+      resolvePromptStarted = resolve
+    })
     mockMessages.clear()
     mockBlocks.clear()
     mockPromptTexts.length = 0
@@ -419,6 +471,55 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
     expect(mockFetchTopicNaming).toHaveBeenCalledWith(message.topicId)
     expect(abortMap.has(message.id)).toBe(false)
+  })
+
+  it('allows a multi-turn response to exceed 120 seconds while tokens keep arriving', async () => {
+    jest.useFakeTimers()
+    mockAgentScenario = 'long-active'
+    const { message, blocks } = makeUserMessage()
+
+    try {
+      const run = sendAgentMessage(message, blocks, assistant, message.topicId)
+      await promptStartedPromise
+
+      await jest.advanceTimersByTimeAsync(110_000)
+      await jest.advanceTimersByTimeAsync(110_000)
+      await jest.advanceTimersByTimeAsync(110_000)
+      await run
+
+      const assistantMessage = Array.from(mockMessages.values()).find(candidate => candidate.role === 'assistant')
+      const textBlock = Array.from(mockBlocks.values()).find(
+        block => block.type === MessageBlockType.MAIN_TEXT && block.messageId === assistantMessage?.id
+      )
+      expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
+      expect(textBlock).toMatchObject({ content: '第一段第二段第三段', status: MessageBlockStatus.SUCCESS })
+      expect(mockAgentAbort).not.toHaveBeenCalled()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('uses a longer inactivity window while a tool is running', async () => {
+    jest.useFakeTimers()
+    mockAgentScenario = 'long-tool'
+    const { message, blocks } = makeUserMessage()
+
+    try {
+      const run = sendAgentMessage(message, blocks, assistant, message.topicId)
+      await promptStartedPromise
+      await jest.advanceTimersByTimeAsync(4 * 60_000)
+      await run
+
+      const assistantMessage = Array.from(mockMessages.values()).find(candidate => candidate.role === 'assistant')
+      const toolBlock = Array.from(mockBlocks.values()).find(
+        block => block.type === MessageBlockType.TOOL && block.messageId === assistantMessage?.id
+      )
+      expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
+      expect(toolBlock).toMatchObject({ status: MessageBlockStatus.SUCCESS })
+      expect(mockAgentAbort).not.toHaveBeenCalled()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('injects discovered MCP tools while keeping the core Agent response working', async () => {

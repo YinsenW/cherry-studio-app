@@ -282,7 +282,7 @@ export interface MCPServer {
   logoUrl?: string // URL of the MCP server's logo
   tags?: string[] // List of tags associated with this server
   longRunning?: boolean // Whether the server is long running
-  timeout?: number // Timeout in seconds for requests to this server, default is 60 seconds
+  timeout?: number // Optional per-server tool timeout in seconds; defaults to the client's 30-minute safety net
   dxtVersion?: string // Version of the DXT package
   dxtPath?: string // Path where the DXT package was extracted
   reference?: string // Reference link for the server, e.g., documentation or homepage

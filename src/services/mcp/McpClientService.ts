@@ -13,7 +13,7 @@
  */
 
 import { RNStreamableHTTPClientTransport } from '@cherrystudio/react-native-streamable-http'
-import type { Tool } from '@modelcontextprotocol/client'
+import type { Progress, Tool } from '@modelcontextprotocol/client'
 import { Client } from '@modelcontextprotocol/client'
 import { InteractionManager } from 'react-native'
 
@@ -29,6 +29,20 @@ import { createMobileAuthProvider, performOAuthFlow } from './oauth'
 const logger = loggerService.withContext('McpClientService')
 const MCP_CONNECT_TIMEOUT_MS = 15_000
 const MCP_LIST_TOOLS_TIMEOUT_MS = 10_000
+// The Agent owns the foreground inactivity policy (five minutes while a tool
+// is running). Keep the SDK timer as a much wider safety net so time spent
+// suspended in the background does not immediately expire an otherwise live
+// MCP request when JavaScript resumes.
+const MCP_TOOL_SDK_SAFETY_TIMEOUT_MS = 30 * 60_000
+
+function getMcpToolIdleTimeoutMs(server: MCPServer): number {
+  const configuredSeconds = server.timeout
+  if (typeof configuredSeconds !== 'number' || !Number.isFinite(configuredSeconds) || configuredSeconds <= 0) {
+    return MCP_TOOL_SDK_SAFETY_TIMEOUT_MS
+  }
+
+  return Math.max(1_000, configuredSeconds * 1_000)
+}
 
 /**
  * Generate a composite cache key for an MCP server connection
@@ -263,7 +277,8 @@ class McpClientService {
     server: MCPServer,
     toolName: string,
     args: Record<string, unknown>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (progress: Progress) => void
   ): Promise<MCPCallToolResponse> {
     // Check SSE type - not yet supported
     if (server.type === 'sse') {
@@ -282,7 +297,14 @@ class McpClientService {
         name: toolName,
         arguments: args
       }
-      const response = signal ? await client.callTool(request, { signal }) : await client.callTool(request)
+      const response = await client.callTool(request, {
+        ...(signal ? { signal } : {}),
+        ...(onProgress ? { onprogress: onProgress } : {}),
+        timeout: getMcpToolIdleTimeoutMs(server),
+        // MCP progress is real activity. Let a long-running server keep its
+        // request alive while it continues to report forward movement.
+        resetTimeoutOnProgress: true
+      })
 
       logger.info(`Tool ${toolName} response:`, response)
 

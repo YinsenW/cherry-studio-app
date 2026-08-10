@@ -1,9 +1,9 @@
-import { messageDatabase } from '@database'
+import { messageBlockDatabase, messageDatabase } from '@database'
 import { useCallback } from 'react'
 
 import { topicService } from '@/services/TopicService'
 import type { Topic } from '@/types/assistant'
-import { AssistantMessageStatus } from '@/types/message'
+import { AssistantMessageStatus, MessageBlockStatus } from '@/types/message'
 import { abortCompletion } from '@/utils/abortController'
 
 import { useTopic } from './useTopic'
@@ -18,27 +18,58 @@ export function useMessageOperations(topic: Topic) {
    * todo: 暂停当前主题正在进行的消息生成。 / Pauses ongoing message generation for the current topic.
    */
   const pauseMessages = useCallback(async () => {
-    const topicMessages = await messageDatabase.getMessagesByTopicId(topic.id)
-    if (!topicMessages) return
+    try {
+      const topicMessages = await messageDatabase.getMessagesByTopicId(topic.id)
+      if (!topicMessages) return
 
-    const streamingMessages = topicMessages.filter(m => m.status === 'processing' || m.status === 'pending')
-    const askIds = [...new Set(streamingMessages?.map(m => m.askId).filter(id => !!id) as string[])]
+      const streamingMessages = topicMessages.filter(
+        message =>
+          message.status === AssistantMessageStatus.PROCESSING ||
+          message.status === AssistantMessageStatus.PENDING ||
+          message.status === AssistantMessageStatus.SEARCHING
+      )
+      const askIds = [...new Set(streamingMessages?.map(m => m.askId).filter(id => !!id) as string[])]
 
-    for (const askId of askIds) {
-      abortCompletion(askId)
+      for (const askId of askIds) {
+        abortCompletion(askId)
+      }
+
+      // Abort callbacks are normally responsible for finalising blocks. Keep a
+      // durable fallback here as well because native suspension or a provider
+      // that closes without a terminal event can prevent that callback from
+      // running. A stopped response is paused, never successfully completed.
+      if (streamingMessages.length > 0) {
+        const now = Date.now()
+        const activeBlockStatuses = new Set([
+          MessageBlockStatus.PENDING,
+          MessageBlockStatus.PROCESSING,
+          MessageBlockStatus.STREAMING
+        ])
+        await Promise.allSettled(
+          streamingMessages.flatMap(message =>
+            message.blocks.map(async blockId => {
+              const block = await messageBlockDatabase.getBlockById(blockId)
+              if (block && activeBlockStatuses.has(block.status)) {
+                await messageBlockDatabase.updateOneBlock({
+                  id: block.id,
+                  changes: { status: MessageBlockStatus.PAUSED, updatedAt: now }
+                })
+              }
+            })
+          )
+        )
+        const messagesToUpdate = streamingMessages.map(msg => ({
+          ...msg,
+          status: AssistantMessageStatus.PAUSED,
+          updatedAt: now
+        }))
+        await messageDatabase.upsertMessages(messagesToUpdate)
+      }
+    } finally {
+      // The stop button must always release the topic-level spinner, even if
+      // one historical block is malformed or a database write fails.
+      await topicService.updateTopic(topic.id, { isLoading: false })
     }
-
-    // 直接更新消息状态为 SUCCESS，确保即使 onError 回调未触发，状态也能正确更新
-    if (streamingMessages.length > 0) {
-      const messagesToUpdate = streamingMessages.map(msg => ({
-        ...msg,
-        status: AssistantMessageStatus.SUCCESS,
-        updatedAt: Date.now()
-      }))
-      await messageDatabase.upsertMessages(messagesToUpdate)
-    }
-
-    await topicService.updateTopic(topic.id, { isLoading: false })
   }, [topic])
 
   return {

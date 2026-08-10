@@ -10,6 +10,7 @@ import { getWebSearchProviders } from '@/config/websearchProviders'
 import { storage } from '@/utils'
 
 import { assistantService, getDefaultAssistant } from './AssistantService'
+import { recoverInterruptedConversations } from './ConversationRecoveryService'
 import { loggerService } from './LoggerService'
 import { mcpService } from './McpService'
 import { preferenceService } from './PreferenceService'
@@ -116,6 +117,7 @@ const LATEST_APP_DATA_VERSION = APP_DATA_MIGRATIONS[APP_DATA_MIGRATIONS.length -
 // overlap with component effects. Keep a single initialization transaction so
 // migrations, provider cache setup and initial-topic creation never race.
 let activeInitialization: Promise<void> | null = null
+let conversationStateReconciled = false
 
 export function resetAppInitializationState(): void {
   preferenceService.clearCache()
@@ -123,7 +125,25 @@ export function resetAppInitializationState(): void {
   providerService.clearCache()
   topicService.resetState()
   mcpService.invalidateCache()
+  conversationStateReconciled = false
   logger.info('App initialization state reset')
+}
+
+async function reconcileConversationStateOnce(): Promise<void> {
+  if (conversationStateReconciled) return
+
+  try {
+    const recovered = await recoverInterruptedConversations()
+    if (recovered.messages > 0) {
+      logger.warn('Recovered interrupted conversation state after app restart', recovered)
+    }
+  } catch (error) {
+    // Recovery is defensive maintenance. A malformed historical row must not
+    // prevent the user from opening the app and fixing or deleting it.
+    logger.error('Unable to recover interrupted conversation state:', error as Error)
+  } finally {
+    conversationStateReconciled = true
+  }
 }
 
 async function ensureCurrentTopic(): Promise<void> {
@@ -205,9 +225,11 @@ export async function runAppDataMigrations(): Promise<void> {
     return activeInitialization
   }
 
-  activeInitialization = runAppDataMigrationsImpl().finally(() => {
-    activeInitialization = null
-  })
+  activeInitialization = runAppDataMigrationsImpl()
+    .then(reconcileConversationStateOnce)
+    .finally(() => {
+      activeInitialization = null
+    })
 
   return activeInitialization
 }
