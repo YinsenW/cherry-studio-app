@@ -93,7 +93,11 @@ function makeToolResponse(
  * - 工具执行 → MCP_TOOL_PENDING/MCP_TOOL_COMPLETE（复用现有 ToolBlock 渲染，且**不触发**中间件自动执行——因为 chunk 在这里直接喂给 streamProcessor，不走 aiCore 中间件链）
  * - agent 结束 → BLOCK_COMPLETE（结束消息状态）
  */
-export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<void>) {
+export function createAgentEventToChunk(
+  emit: (chunk: Chunk) => void | Promise<void>,
+  options: { responseAlreadyCreated?: boolean } = {}
+) {
+  let responseCreated = options.responseAlreadyCreated ?? false
   let textStarted = false
   let terminalError: ReturnType<typeof getTerminalFailure> = null
   let agentEnded = false
@@ -104,7 +108,10 @@ export function createAgentEventToChunk(emit: (chunk: Chunk) => void | Promise<v
   const adapter = (async (event: PiAgentEvent) => {
     switch (event.type) {
       case 'agent_start':
-        await emit({ type: ChunkType.LLM_RESPONSE_CREATED })
+        if (!responseCreated) {
+          responseCreated = true
+          await emit({ type: ChunkType.LLM_RESPONSE_CREATED })
+        }
         break
 
       case 'message_start':

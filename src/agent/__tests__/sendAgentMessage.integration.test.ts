@@ -13,6 +13,7 @@ const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
 const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _model: Model) => [])
 const mockCreateMcpTools = jest.fn(async (_assistant: Assistant): Promise<unknown[]> => [])
+let placeholderAtMcpDiscoveryStart: MessageBlock | undefined
 const mockRuntimePublishPendingOutputs = jest.fn(async () => [])
 const mockRuntimeFinish = jest.fn(async () => undefined)
 const mockRuntimeBackend = {
@@ -63,7 +64,7 @@ const mockRuntimeSession = {
 }
 const mockRuntimeStartRun = jest.fn(async (..._args: unknown[]) => mockRuntimeSession)
 const mockGetLatestAssistant = jest.fn(async (_assistantId: string): Promise<Assistant | null> => null)
-let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
+let mockAgentScenario: 'success' | 'error' | 'missing-terminal' | 'invisible-success' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -191,20 +192,32 @@ class MockAgentService {
                 messages: [{ stopReason: 'error', errorMessage: '模拟 Provider 请求失败' }]
               }
             ]
-          : [
-              { type: 'agent_start' },
-              {
-                type: 'message_update',
-                assistantMessageEvent: {
-                  type: 'text_delta',
-                  partial: { content: [{ type: 'text', text: '未正确结束的响应' }] }
+          : mockAgentScenario === 'invisible-success'
+            ? [
+                { type: 'agent_start' },
+                {
+                  type: 'tool_execution_end',
+                  toolName: 'orphaned_tool',
+                  toolCallId: 'orphaned-call',
+                  isError: false,
+                  result: { content: [{ type: 'text', text: 'result without a persisted tool block' }] }
+                },
+                { type: 'agent_end', messages: [{ role: 'assistant', content: [], stopReason: 'stop' }] }
+              ]
+            : [
+                { type: 'agent_start' },
+                {
+                  type: 'message_update',
+                  assistantMessageEvent: {
+                    type: 'text_delta',
+                    partial: { content: [{ type: 'text', text: '未正确结束的响应' }] }
+                  }
+                },
+                {
+                  type: 'message_end',
+                  message: { role: 'assistant', content: [{ type: 'text', text: '未正确结束的响应' }] }
                 }
-              },
-              {
-                type: 'message_end',
-                message: { role: 'assistant', content: [{ type: 'text', text: '未正确结束的响应' }] }
-              }
-            ]
+              ]
 
     for (const event of events) {
       for (const listener of this.listeners) {
@@ -369,6 +382,7 @@ describe('sendAgentMessage simulated main flow', () => {
     abortMap.clear()
     jest.clearAllMocks()
     mockGetLatestAssistant.mockResolvedValue(null)
+    placeholderAtMcpDiscoveryStart = undefined
     mockUpdateTopic.mockResolvedValue(undefined)
     mockFetchTopicNaming.mockResolvedValue(undefined)
   })
@@ -463,6 +477,29 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
     expect(textBlock).toMatchObject({ content: '模拟响应', status: MessageBlockStatus.SUCCESS })
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
+  })
+
+  it('persists a loading placeholder before cold MCP discovery begins', async () => {
+    const { message, blocks } = makeUserMessage()
+    const assistantWithMcp: Assistant = {
+      ...assistant,
+      mcpServers: [{ id: 'slow-mcp' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    mockCreateMcpTools.mockImplementationOnce(async () => {
+      placeholderAtMcpDiscoveryStart = Array.from(mockBlocks.values()).find(
+        block => block.type === MessageBlockType.UNKNOWN && block.messageId !== message.id
+      )
+      return []
+    })
+
+    await sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
+
+    expect(placeholderAtMcpDiscoveryStart).toMatchObject({
+      type: MessageBlockType.UNKNOWN,
+      status: MessageBlockStatus.PROCESSING
+    })
+    const assistantBlocks = Array.from(mockBlocks.values()).filter(block => block.messageId !== message.id)
+    expect(assistantBlocks.filter(block => block.type === MessageBlockType.MAIN_TEXT)).toHaveLength(1)
   })
 
   it('registers MCP tools for an unrecognised custom model without requiring toolUseMode', async () => {
@@ -563,6 +600,26 @@ describe('sendAgentMessage simulated main flow', () => {
       messageId: assistantMessage?.id,
       error: expect.objectContaining({
         message: 'The agent session ended without a terminal event.'
+      })
+    })
+    expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
+    expect(abortMap.has(message.id)).toBe(false)
+  })
+
+  it('rejects a successful terminal state when persistence contains only an invisible placeholder', async () => {
+    mockAgentScenario = 'invisible-success'
+    const { message, blocks } = makeUserMessage()
+
+    await sendAgentMessage(message, blocks, assistant, message.topicId)
+
+    const assistantMessage = Array.from(mockMessages.values()).find(candidate => candidate.role === 'assistant')
+    const errorBlock = Array.from(mockBlocks.values()).find(block => block.type === MessageBlockType.ERROR)
+
+    expect(assistantMessage?.status).toBe(AssistantMessageStatus.ERROR)
+    expect(errorBlock).toMatchObject({
+      messageId: assistantMessage?.id,
+      error: expect.objectContaining({
+        message: 'The agent response contained no renderable content. Please retry.'
       })
     })
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })

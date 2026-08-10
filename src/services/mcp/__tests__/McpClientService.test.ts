@@ -120,6 +120,7 @@ describe('McpClientService', () => {
         expect(transportOptions).not.toHaveProperty('manualAuthOnly')
         expect(transportOptions.fetch).toBe(mcpExpoNativeFetch)
         expect(mockConnect).toHaveBeenCalledTimes(1)
+        expect(mockConnect).toHaveBeenCalledWith(expect.any(Object), { timeout: 15_000 })
         expect(client).toBeDefined()
       })
 
@@ -266,6 +267,7 @@ describe('McpClientService', () => {
         expect(tools[0].serverName).toBe(server.name)
         expect(tools[0].type).toBe('mcp')
         expect(tools[0].isBuiltIn).toBe(false)
+        expect(mockListTools).toHaveBeenCalledWith(undefined, { timeout: 10_000 })
       })
 
       it('should return cached tools within TTL', async () => {

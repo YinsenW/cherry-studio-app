@@ -16,6 +16,7 @@ import { agentToolToAiSdkTool } from './toolAdapter'
 
 const logger = loggerService.withContext('streamBridge')
 const EMPTY_RESPONSE_ERROR_MESSAGE = 'The model provider returned an empty response.'
+const MAX_EMPTY_RESPONSE_ATTEMPTS = 2
 type SuccessfulStopReason = Extract<AssistantMessage['stopReason'], 'stop' | 'length' | 'toolUse' | 'deferred'>
 
 function toPiStopReason(finishReason: string): SuccessfulStopReason {
@@ -124,87 +125,111 @@ export function createStreamFn(
           ...sharedRequestParams
         } = requestParams
 
-        const result = await executor.streamText({
+        const streamRequest = {
           ...sharedRequestParams,
           model: aiModel,
           system: context.systemPrompt,
           messages,
           tools: tools as Parameters<typeof executor.streamText>[0]['tools'],
           abortSignal: options?.signal
-        })
+        } satisfies Parameters<typeof executor.streamText>[0]
+        let streamStarted = false
+        const ensureStreamStarted = () => {
+          if (streamStarted) return
+          streamStarted = true
+          stream.push({ type: 'start', partial: buildPartial() })
+        }
 
-        stream.push({ type: 'start', partial: buildPartial() })
+        for (let attempt = 1; attempt <= MAX_EMPTY_RESPONSE_ATTEMPTS; attempt++) {
+          stopReason = 'stop'
+          const result = await executor.streamText(streamRequest)
+          // Keep the pi stream protocol stable: every attempt sequence has
+          // exactly one start event, emitted before any provider chunks.
+          ensureStreamStarted()
 
-        for await (const chunk of result.fullStream) {
-          if (chunk.type === 'text-delta') {
-            text += chunk.text
-            stream.push({
-              type: 'text_delta',
-              contentIndex: 0,
-              delta: chunk.text,
-              partial: buildPartial()
-            })
-          } else if (chunk.type === 'tool-call') {
-            // fullStream 的 tool-call 块有两种形态（静态/动态），
-            // 统一用可选访问提取字段。
-            const chunkAny = chunk as {
-              toolCallId?: string
-              toolName?: string
-              input?: Record<string, unknown>
+          for await (const chunk of result.fullStream) {
+            if (chunk.type === 'text-delta') {
+              ensureStreamStarted()
+              text += chunk.text
+              stream.push({
+                type: 'text_delta',
+                contentIndex: 0,
+                delta: chunk.text,
+                partial: buildPartial()
+              })
+            } else if (chunk.type === 'tool-call') {
+              ensureStreamStarted()
+              // fullStream 的 tool-call 块有两种形态（静态/动态），
+              // 统一用可选访问提取字段。
+              const chunkAny = chunk as {
+                toolCallId?: string
+                toolName?: string
+                input?: Record<string, unknown>
+              }
+              toolCalls.push({
+                type: 'toolCall',
+                id: chunkAny.toolCallId ?? `tool-${toolCalls.length}`,
+                name: chunkAny.toolName ?? 'unknown',
+                arguments: chunkAny.input ?? {}
+              })
+              stream.push({
+                type: 'toolcall_end',
+                contentIndex: text ? 1 : 0,
+                toolCall: toolCalls[toolCalls.length - 1],
+                partial: buildPartial()
+              })
+            } else if (chunk.type === 'finish') {
+              if (chunk.finishReason === 'error') {
+                throw new Error('The model provider ended the stream with an error.')
+              }
+              stopReason = toPiStopReason(chunk.finishReason)
+            } else if (chunk.type === 'error') {
+              throw normalizeAgentError(chunk.error)
+            } else if (chunk.type === 'abort') {
+              abortedByStream = true
+              throw new Error('Request was aborted.')
             }
-            toolCalls.push({
-              type: 'toolCall',
-              id: chunkAny.toolCallId ?? `tool-${toolCalls.length}`,
-              name: chunkAny.toolName ?? 'unknown',
-              arguments: chunkAny.input ?? {}
-            })
-            stream.push({
-              type: 'toolcall_end',
-              contentIndex: text ? 1 : 0,
-              toolCall: toolCalls[toolCalls.length - 1],
-              partial: buildPartial()
-            })
-          } else if (chunk.type === 'finish') {
-            if (chunk.finishReason === 'error') {
-              throw new Error('The model provider ended the stream with an error.')
+          }
+
+          // Some compatible providers do not expose text deltas even though
+          // the final StreamTextResult contains text. Recover it before
+          // treating the turn as empty; message_end creates the UI text block.
+          if (!text) {
+            text = (await result.text) || ''
+          }
+
+          // Likewise, retain final tool calls if a provider omitted their
+          // intermediate fullStream event.
+          if (toolCalls.length === 0) {
+            const finalToolCalls = (await result.toolCalls) || []
+            for (const finalToolCall of finalToolCalls) {
+              toolCalls.push({
+                type: 'toolCall',
+                id: finalToolCall.toolCallId,
+                name: finalToolCall.toolName,
+                arguments: finalToolCall.input as Record<string, unknown>
+              })
             }
-            stopReason = toPiStopReason(chunk.finishReason)
-          } else if (chunk.type === 'error') {
-            throw normalizeAgentError(chunk.error)
-          } else if (chunk.type === 'abort') {
-            abortedByStream = true
-            throw new Error('Request was aborted.')
           }
-        }
 
-        // Some compatible providers do not expose text deltas even though the
-        // final StreamTextResult contains text. Recover it before treating the
-        // turn as empty; message_end will create the UI text block.
-        if (!text) {
-          text = (await result.text) || ''
-        }
-
-        // Likewise, retain final tool calls if a provider omitted their
-        // intermediate fullStream event.
-        if (toolCalls.length === 0) {
-          const finalToolCalls = (await result.toolCalls) || []
-          for (const finalToolCall of finalToolCalls) {
-            toolCalls.push({
-              type: 'toolCall',
-              id: finalToolCall.toolCallId,
-              name: finalToolCall.toolName,
-              arguments: finalToolCall.input as Record<string, unknown>
-            })
+          if (!text.trim() && toolCalls.length === 0) {
+            if (attempt < MAX_EMPTY_RESPONSE_ATTEMPTS && options?.signal?.aborted !== true) {
+              logger.warn('Provider returned no text or tool calls; retrying the Agent request once.', {
+                providerId: provider.id,
+                modelId: model.id
+              })
+              text = ''
+              continue
+            }
+            throw new Error(EMPTY_RESPONSE_ERROR_MESSAGE)
           }
-        }
 
-        if (!text.trim() && toolCalls.length === 0) {
-          throw new Error(EMPTY_RESPONSE_ERROR_MESSAGE)
+          ensureStreamStarted()
+          const finalMessage = buildPartial(stopReason)
+          stream.push({ type: 'done', reason: stopReason, message: finalMessage })
+          stream.end(finalMessage)
+          return
         }
-
-        const finalMessage = buildPartial(stopReason)
-        stream.push({ type: 'done', reason: stopReason, message: finalMessage })
-        stream.end(finalMessage)
       } catch (error) {
         logger.error('streamBridge executor 调用失败:', error)
         const errorLike =

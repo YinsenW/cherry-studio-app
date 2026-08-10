@@ -47,6 +47,32 @@ const logger = loggerService.withContext('sendAgentMessage')
 
 const AGENT_TIMEOUT_MS = 120_000
 const AGENT_PROTOCOL_ERROR_MESSAGE = 'The agent session ended without a terminal event.'
+const EMPTY_PERSISTED_AGENT_RESPONSE_MESSAGE = 'The agent response contained no renderable content. Please retry.'
+
+function hasPersistedVisibleAgentOutput(blocks: MessageBlock[]): boolean {
+  return blocks.some(block => {
+    switch (block.type) {
+      case MessageBlockType.MAIN_TEXT:
+      case MessageBlockType.THINKING:
+      case MessageBlockType.TRANSLATION:
+      case MessageBlockType.CODE:
+        return block.content.trim().length > 0
+      case MessageBlockType.TOOL:
+        return block.metadata?.rawMcpToolResponse !== undefined
+      case MessageBlockType.IMAGE:
+        return Boolean(block.url || block.file || block.metadata?.generateImageResponse)
+      case MessageBlockType.FILE:
+        return Boolean(block.file)
+      case MessageBlockType.CITATION:
+        return Boolean(block.response || block.knowledge?.length)
+      case MessageBlockType.ERROR:
+        return true
+      case MessageBlockType.UNKNOWN:
+      default:
+        return false
+    }
+  })
+}
 
 async function persistFallbackAgentError(assistantMessage: Message, topicId: Topic['id'], error: Error): Promise<void> {
   const existingMessage = await messageDatabase.getMessageById(assistantMessage.id)
@@ -281,6 +307,12 @@ export async function runAgentSession(
     })
     streamProcessor = createStreamProcessor(callbacks)
     const processChunk = (chunk: Parameters<ReturnType<typeof createStreamProcessor>>[0]) => streamProcessor!(chunk)
+
+    // Tool discovery (especially a cold remote MCP connection) happens before
+    // pi Agent can emit agent_start. Persist the placeholder now so the send
+    // action has immediate visible feedback instead of looking blank for the
+    // entire MCP initialization window.
+    await processChunk({ type: ChunkType.LLM_RESPONSE_CREATED })
     await topicService.updateTopic(topicId, { isLoading: true })
 
     // 2. 读取历史并转换为 pi 上下文。本次用户消息会由 prompt()
@@ -362,7 +394,7 @@ export async function runAgentSession(
     )
 
     // 5. 事件 → chunk → 现有块流
-    const eventAdapter = createAgentEventToChunk(processChunk)
+    const eventAdapter = createAgentEventToChunk(processChunk, { responseAlreadyCreated: true })
     unsubscribeAgentEvents = agentService.subscribe(eventAdapter)
 
     // 6. 中止：绑定到现有「暂停/停止」机制
@@ -404,22 +436,6 @@ export async function runAgentSession(
       await streamProcessor.drain()
     }
 
-    if (
-      runtimeSession &&
-      eventAdapter.getState().agentEnded &&
-      streamProcessor.getTerminalStatus() === AssistantMessageStatus.SUCCESS
-    ) {
-      try {
-        await runtimeSession.publishPendingOutputs()
-      } catch (error) {
-        const publicationError = new Error('Agent completed, but one or more output files could not be published.', {
-          cause: error
-        })
-        ;(publicationError as Error & { code: string }).code = 'AGENT_ARTIFACT_PUBLISH_FAILED'
-        throw publicationError
-      }
-    }
-
     const persistedMessage = await messageDatabase.getMessageById(assistantMessage.id)
     if (
       !persistedMessage ||
@@ -432,7 +448,34 @@ export async function runAgentSession(
         new Error('The agent session finished without persisting a terminal message state.')
       )
     }
-    const finalMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    let finalMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    if (finalMessage?.status === AssistantMessageStatus.SUCCESS) {
+      const finalBlocks = await findAllBlocks(finalMessage)
+      if (!hasPersistedVisibleAgentOutput(finalBlocks)) {
+        const emptyResponseError = new Error(EMPTY_PERSISTED_AGENT_RESPONSE_MESSAGE) as Error & { code: string }
+        emptyResponseError.code = 'AGENT_EMPTY_PERSISTED_RESPONSE'
+        runError = emptyResponseError
+        await persistFallbackAgentError(assistantMessage, topicId, emptyResponseError)
+        finalMessage = await messageDatabase.getMessageById(assistantMessage.id)
+      }
+    }
+
+    if (
+      runtimeSession &&
+      eventAdapter.getState().agentEnded &&
+      finalMessage?.status === AssistantMessageStatus.SUCCESS
+    ) {
+      try {
+        await runtimeSession.publishPendingOutputs()
+      } catch (error) {
+        const publicationError = new Error('Agent completed, but one or more output files could not be published.', {
+          cause: error
+        })
+        ;(publicationError as Error & { code: string }).code = 'AGENT_ARTIFACT_PUBLISH_FAILED'
+        throw publicationError
+      }
+    }
+
     runOutcome = finalMessage?.status === AssistantMessageStatus.SUCCESS ? 'success' : 'error'
   } catch (error) {
     logger.error('Error in agent session:', error as Error)

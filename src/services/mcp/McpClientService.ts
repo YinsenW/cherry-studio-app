@@ -27,6 +27,8 @@ import { mcpExpoNativeFetch } from './McpFetch'
 import { createMobileAuthProvider, performOAuthFlow } from './oauth'
 
 const logger = loggerService.withContext('McpClientService')
+const MCP_CONNECT_TIMEOUT_MS = 15_000
+const MCP_LIST_TOOLS_TIMEOUT_MS = 10_000
 
 /**
  * Generate a composite cache key for an MCP server connection
@@ -235,7 +237,7 @@ class McpClientService {
     // Fetch from server
     try {
       const client = await this.getClient(server)
-      const response = await client.listTools()
+      const response = await client.listTools(undefined, { timeout: MCP_LIST_TOOLS_TIMEOUT_MS })
 
       const tools = (response.tools || []).map(tool => sdkToolToMcpTool(tool, server))
 
@@ -577,7 +579,7 @@ class McpClientService {
       }
     )
 
-    await client.connect(transport)
+    await client.connect(transport, { timeout: MCP_CONNECT_TIMEOUT_MS })
 
     // Store client entry
     this.clients.set(server.id, {
