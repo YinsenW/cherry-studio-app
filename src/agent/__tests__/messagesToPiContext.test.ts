@@ -7,10 +7,11 @@ import { messagesToPiContext, messageToPiUserMessage } from '../messagesToPiCont
 
 const mockBlocks = new Map<string, MessageBlock>()
 const mockIsVisionModel = jest.fn()
+const mockGetBlockById = jest.fn(async (id: string) => mockBlocks.get(id))
 
 jest.mock('@database', () => ({
   messageBlockDatabase: {
-    getBlockById: async (id: string) => mockBlocks.get(id)
+    getBlockById: (id: string) => mockGetBlockById(id)
   }
 }))
 jest.mock('@/config/models', () => ({
@@ -89,6 +90,7 @@ describe('messageToPiUserMessage', () => {
     expect(manifestText).toContain('"bytes": 5')
     expect(manifestText).not.toContain('file:///private')
     expect(result.content[1]).toEqual({ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' })
+    expect(mockGetBlockById).toHaveBeenCalledTimes(message.blocks.length)
   })
 
   it('makes omitted images visible to the model instead of silently dropping them', async () => {

@@ -42,7 +42,6 @@ import { agentRuntimeService } from './workspace/AgentRuntimeService'
 import { createMobileWorkspaceTools } from './workspace/mobileWorkspaceTools'
 import { ToolApprovalCoordinator } from './workspace/ToolApprovalCoordinator'
 import type { WorkspaceBackend } from './workspace/types'
-import { workspaceService } from './workspace/WorkspaceService'
 
 const logger = loggerService.withContext('sendAgentMessage')
 
@@ -196,16 +195,7 @@ function shouldLoadBuiltInAgentTools(assistant: Assistant): boolean {
   return Boolean(model && (assistant.settings?.toolUseMode === 'function' || isFunctionCallingModel(model)))
 }
 
-async function loadAgentTools(
-  assistant: Assistant,
-  topicId?: Topic['id'],
-  providedWorkspaceBackend?: WorkspaceBackend | null,
-  runtimeSession?: AgentRuntimeSession | null
-): Promise<AgentTool[]> {
-  if (!shouldLoadBuiltInAgentTools(assistant)) {
-    return []
-  }
-
+async function loadBuiltInAgentTools(assistant: Assistant): Promise<AgentTool[]> {
   const records = await Promise.all([
     loadAiToolRecord('system', async () => (await import('@/aiCore/tools/SystemTools')).SystemTool),
     loadAiToolRecord('Android', async () => (await import('@/aiCore/tools/SystemTools/AndroidTools')).AndroidTool),
@@ -240,26 +230,41 @@ async function loadAgentTools(
     }
   }
 
+  return builtInTools
+}
+
+/**
+ * Start all module loading and remote MCP discovery independently from the
+ * private runtime/history path. These are independent prerequisites for the
+ * same model request and should overlap instead of adding their latencies.
+ */
+async function loadConfiguredAgentTools(assistant: Assistant): Promise<AgentTool[]> {
+  const [builtInTools, mcpTools] = await Promise.all([
+    shouldLoadBuiltInAgentTools(assistant) ? loadBuiltInAgentTools(assistant) : Promise.resolve([]),
+    assistant.mcpServers?.length ? loadMcpAgentTools(assistant) : Promise.resolve([])
+  ])
+
+  return [...builtInTools, ...mcpTools]
+}
+
+function composeAgentTools(
+  configuredTools: AgentTool[],
+  topicId: Topic['id'],
+  workspaceBackend: WorkspaceBackend | null,
+  runtimeSession: AgentRuntimeSession | null
+): AgentTool[] {
   let mobileWorkspaceTools: AgentTool[] = []
-  if (providedWorkspaceBackend) {
-    mobileWorkspaceTools = createMobileWorkspaceTools(providedWorkspaceBackend, topicId ? { topicId } : undefined, {
-      ...(runtimeSession ? { publishFile: runtimeSession.publishFile.bind(runtimeSession) } : {})
-    })
-  } else if (providedWorkspaceBackend === undefined && topicId) {
-    try {
-      const workspaceBackend = await workspaceService.getBackendForTopic(topicId)
-      mobileWorkspaceTools = createMobileWorkspaceTools(workspaceBackend, topicId ? { topicId } : undefined)
-    } catch (error) {
-      logger.warn('Agent will continue without mobile workspace tools:', error as Error)
-    }
+  if (workspaceBackend) {
+    mobileWorkspaceTools = createMobileWorkspaceTools(
+      workspaceBackend,
+      { topicId },
+      {
+        ...(runtimeSession ? { publishFile: runtimeSession.publishFile.bind(runtimeSession) } : {})
+      }
+    )
   }
 
-  return validateAgentTools([
-    ...mobileWorkspaceTools,
-    ...(runtimeSession?.attachmentTools ?? []),
-    ...builtInTools,
-    ...(await loadMcpAgentTools(assistant))
-  ])
+  return validateAgentTools([...mobileWorkspaceTools, ...(runtimeSession?.attachmentTools ?? []), ...configuredTools])
 }
 
 /**
@@ -277,6 +282,7 @@ export async function runAgentSession(
   assistant: Assistant,
   topicId: Topic['id']
 ) {
+  const sessionStartedAt = Date.now()
   let streamProcessor: ReturnType<typeof createStreamProcessor> | null = null
   let unsubscribeAgentEvents: (() => void) | null = null
   let activityWatchdog: AgentActivityWatchdog | null = null
@@ -317,9 +323,18 @@ export async function runAgentSession(
     await processChunk({ type: ChunkType.LLM_RESPONSE_CREATED })
     await topicService.updateTopic(topicId, { isLoading: true })
 
+    // Loading tool modules and discovering MCP schemas can be the slowest
+    // cold-start step. Begin it immediately after the visible placeholder is
+    // persisted, then overlap it with history/provider/runtime preparation.
+    const canUseBuiltInAgentTools = shouldLoadBuiltInAgentTools(resolvedAssistant)
+    const configuredToolsPromise = loadConfiguredAgentTools(resolvedAssistant)
+
     // 2. 读取历史并转换为 pi 上下文。本次用户消息会由 prompt()
     // 注入，所以和 assistant 占位消息一起排除，避免同一条问题发送两次。
-    const allMessages = await messageDatabase.getMessagesByTopicId(topicId)
+    const [allMessages, configuredProvider] = await Promise.all([
+      messageDatabase.getMessagesByTopicId(topicId),
+      getAssistantProvider(resolvedAssistant)
+    ])
     const { contextCount } = getAssistantSettings(resolvedAssistant)
     const filteredMessages = ConversationService.filterMessagesPipeline(
       allMessages.filter(message => message.id !== assistantMessage.id),
@@ -327,14 +342,7 @@ export async function runAgentSession(
     )
     // 3. Start the private runtime before serializing attachments. The model
     // receives only a bounded manifest whose paths must reflect real mounts.
-    const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    // Built-in tools still respect the model capability gate. A configured
-    // MCP server is different: its tools are an explicit user choice and
-    // must be registered even when a custom model is absent from Cherry's
-    // model-name capability table.
-    const canUseBuiltInAgentTools = shouldLoadBuiltInAgentTools(resolvedAssistant)
-    const hasConfiguredMcp = (resolvedAssistant.mcpServers?.length ?? 0) > 0
     let workspaceBackend: WorkspaceBackend | null = null
     if (canUseBuiltInAgentTools) {
       try {
@@ -354,11 +362,22 @@ export async function runAgentSession(
         logger.warn('Agent will continue without private mobile runtime tools:', error as Error)
       }
     }
-    const convertedContextMessages = await messagesToPiContext(
-      filteredMessages.filter(message => message.id !== userMessage.id),
-      resolvedAssistant.model!,
-      { attachmentToolsAvailable: Boolean(workspaceBackend) }
-    )
+    const [convertedContextMessages, userPrompt, configuredTools] = await Promise.all([
+      messagesToPiContext(
+        filteredMessages.filter(message => message.id !== userMessage.id),
+        resolvedAssistant.model!,
+        {
+          attachmentToolsAvailable: Boolean(workspaceBackend)
+        }
+      ),
+      messageToPiUserMessage(userMessage, resolvedAssistant.model!, {
+        attachmentGroupPath: 'current',
+        attachmentScope: 'current',
+        attachmentToolsAvailable: Boolean(workspaceBackend),
+        includeImages: true
+      }),
+      configuredToolsPromise
+    ])
     const compactedContext = compactAgentContext(convertedContextMessages)
     if (compactedContext.dropped > 0) {
       logger.info(`Dropped ${compactedContext.dropped} historical Agent message(s) to stay within the context budget.`)
@@ -377,11 +396,8 @@ export async function runAgentSession(
         createdAt: 0,
         updatedAt: 0
       } as const)
-    const tools = canUseBuiltInAgentTools
-      ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend, runtimeSession)
-      : hasConfiguredMcp
-        ? validateAgentTools(await loadMcpAgentTools(resolvedAssistant))
-        : []
+    const tools = composeAgentTools(configuredTools, topicId, workspaceBackend, runtimeSession)
+    let firstProviderActivityLogged = false
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,
@@ -391,7 +407,13 @@ export async function runAgentSession(
       resolvedAssistant,
       {
         toolExecution: 'parallel',
-        onActivity: () => activityWatchdog?.recordActivity(),
+        onActivity: () => {
+          if (!firstProviderActivityLogged) {
+            firstProviderActivityLogged = true
+            logger.info(`Agent received its first provider event after ${Date.now() - sessionStartedAt}ms.`)
+          }
+          activityWatchdog?.recordActivity()
+        },
         beforeToolCall: async (context, signal) => {
           // A user may legitimately leave an approval dialog open or switch
           // apps to inspect the target file. This is waiting for input, not a
@@ -432,12 +454,6 @@ export async function runAgentSession(
     abortAgent = () => agentService.abort()
     addAbortController(userMessage.id, abortAgent)
 
-    const userPrompt = await messageToPiUserMessage(userMessage, resolvedAssistant.model!, {
-      attachmentGroupPath: 'current',
-      attachmentScope: 'current',
-      attachmentToolsAvailable: Boolean(workspaceBackend),
-      includeImages: true
-    })
     if (userPrompt.content.length === 0) {
       throw new Error('The message did not contain any text or supported attachment content.')
     }
@@ -477,6 +493,9 @@ export async function runAgentSession(
       }
     })
     activityWatchdog.start()
+    logger.info(
+      `Agent model request starting after ${Date.now() - sessionStartedAt}ms of preparation with ${tools.length} tool(s).`
+    )
 
     try {
       await Promise.race([agentService.prompt(userPrompt), inactivityPromise])

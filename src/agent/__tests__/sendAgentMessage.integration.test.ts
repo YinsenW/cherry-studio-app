@@ -72,6 +72,16 @@ let mockAgentScenario: 'success' | 'error' | 'missing-terminal' | 'invisible-suc
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const mockMessageDatabase = {
   upsertMessages: jest.fn(async (input: Message | Message[]) => {
     const messages = Array.isArray(input) ? input : [input]
@@ -601,6 +611,37 @@ describe('sendAgentMessage simulated main flow', () => {
     })
     const assistantBlocks = Array.from(mockBlocks.values()).filter(block => block.messageId !== message.id)
     expect(assistantBlocks.filter(block => block.type === MessageBlockType.MAIN_TEXT)).toHaveLength(1)
+  })
+
+  it('overlaps MCP discovery with private runtime startup before contacting the model', async () => {
+    const { message, blocks } = makeUserMessage()
+    const assistantWithMcp: Assistant = {
+      ...assistant,
+      settings: { toolUseMode: 'function' },
+      mcpServers: [{ id: 'slow-mcp' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    const mcpStarted = deferred<void>()
+    const runtimeStarted = deferred<void>()
+    const mcpResult = deferred<unknown[]>()
+    const runtimeResult = deferred<typeof mockRuntimeSession>()
+    mockCreateMcpTools.mockImplementationOnce(() => {
+      mcpStarted.resolve()
+      return mcpResult.promise
+    })
+    mockRuntimeStartRun.mockImplementationOnce(() => {
+      runtimeStarted.resolve()
+      return runtimeResult.promise
+    })
+
+    const run = sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
+    await Promise.all([mcpStarted.promise, runtimeStarted.promise])
+
+    expect(mockAgentConstruction).not.toHaveBeenCalled()
+    mcpResult.resolve([])
+    runtimeResult.resolve(mockRuntimeSession)
+    await run
+
+    expect(mockAgentConstruction).toHaveBeenCalled()
   })
 
   it('registers MCP tools for an unrecognised custom model without requiring toolUseMode', async () => {

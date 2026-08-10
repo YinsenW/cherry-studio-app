@@ -5,8 +5,9 @@ import { Directory, File, Paths } from 'expo-file-system'
 import { loggerService } from '@/services/LoggerService'
 import type { FileMetadata } from '@/types/file'
 import type { Message } from '@/types/message'
+import { MessageBlockType } from '@/types/message'
 import { uuid } from '@/utils'
-import { findFileBlocks, findImageBlocks } from '@/utils/messageUtils/find'
+import { findAllBlocks } from '@/utils/messageUtils/find'
 
 import { AgentDocumentService } from '../attachments/anydoc/AgentDocumentService'
 import { createDocumentTools } from '../attachments/anydoc/documentTools'
@@ -30,12 +31,12 @@ function storageSegment(value: string): string {
 }
 
 async function collectMessageFiles(message: Message): Promise<FileMetadata[]> {
-  const [fileBlocks, imageBlocks] = await Promise.all([findFileBlocks(message), findImageBlocks(message)])
+  const blocks = await findAllBlocks(message)
   const unique = new Map<string, FileMetadata>()
-  fileBlocks.forEach(block => unique.set(block.file.id, block.file))
-  imageBlocks.forEach(block => {
-    if (block.file) unique.set(block.file.id, block.file)
-  })
+  for (const block of blocks) {
+    if (block.type === MessageBlockType.FILE) unique.set(block.file.id, block.file)
+    if (block.type === MessageBlockType.IMAGE && block.file) unique.set(block.file.id, block.file)
+  }
   return [...unique.values()]
 }
 
@@ -150,15 +151,19 @@ export class AgentRuntimeService {
     const runRoot = new Directory(Paths.cache, 'AgentRuntime', 'runs', runId)
     const topicRoot = new Directory(Paths.document, 'AgentRuntime', 'topics', topicKey)
 
-    const currentFiles = await collectMessageFiles(input.userMessage)
+    const historyMessages = (input.historyMessages ?? []).filter(message => message.id !== input.userMessage.id)
+    const [currentFiles, historicalInputGroups] = await Promise.all([
+      collectMessageFiles(input.userMessage),
+      Promise.all(
+        historyMessages.map(async message => ({
+          path: attachmentHistoryGroupPath(message.id),
+          files: await collectMessageFiles(message),
+          messageId: message.id
+        }))
+      )
+    ])
     const inputGroups = [{ path: 'current', files: currentFiles, messageId: input.userMessage.id }]
-    for (const message of input.historyMessages ?? []) {
-      if (message.id === input.userMessage.id) continue
-      const files = await collectMessageFiles(message)
-      if (files.length > 0) {
-        inputGroups.push({ path: attachmentHistoryGroupPath(message.id), files, messageId: message.id })
-      }
-    }
+    inputGroups.push(...historicalInputGroups.filter(group => group.files.length > 0))
 
     const descriptor = (id: string, name: string, rootUri: string): WorkspaceDescriptor => ({
       id,

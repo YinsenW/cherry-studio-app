@@ -51,8 +51,29 @@ import { loggerService } from '@/services/LoggerService'
 import { mcpClientService } from '@/services/mcp/McpClientService'
 import type { MCPServer } from '@/types/mcp'
 import type { MCPTool } from '@/types/tool'
+import { storage } from '@/utils'
 
 const logger = loggerService.withContext('McpService')
+const MCP_TOOLS_SNAPSHOT_PREFIX = 'mcp_tools_snapshot_v1:'
+
+type McpToolsCacheEntry = {
+  tools: MCPTool[]
+  timestamp: number
+}
+
+type PersistedMcpToolsSnapshot = McpToolsCacheEntry & {
+  version: 1
+}
+
+function getMcpToolsSnapshotKey(mcpId: string): string {
+  return `${MCP_TOOLS_SNAPSHOT_PREFIX}${mcpId}`
+}
+
+function haveEqualHeaders(left?: Record<string, string>, right?: Record<string, string>): boolean {
+  const leftEntries = Object.entries(left ?? {})
+  const rightEntries = Object.entries(right ?? {})
+  return leftEntries.length === rightEntries.length && leftEntries.every(([key, value]) => right?.[key] === value)
+}
 
 /**
  * Unsubscribe function returned by subscribe methods
@@ -145,7 +166,13 @@ export class McpService {
    * Key: mcpId
    * Value: { tools: MCPTool[], timestamp: number }
    */
-  private toolsCache = new Map<string, { tools: MCPTool[]; timestamp: number }>()
+  private toolsCache = new Map<string, McpToolsCacheEntry>()
+
+  /** Deduplicate cold tools/list requests for the same server. */
+  private toolsLoadPromises = new Map<string, Promise<MCPTool[]>>()
+
+  /** Prevent an obsolete in-flight request from repopulating an invalidated cache. */
+  private toolsCacheGenerations = new Map<string, number>()
 
   /**
    * TTL for tools cache (5 minutes, same as other caches)
@@ -329,77 +356,139 @@ export class McpService {
         return []
       }
 
-      let tools: MCPTool[] = []
-
-      // Check cache first (unless force refresh)
       if (!forceRefresh) {
-        const cached = this.toolsCache.get(mcpId)
-        if (cached && Date.now() - cached.timestamp < this.TOOLS_CACHE_TTL) {
-          logger.verbose(`Tools cache hit for MCP server: ${mcpId}`)
-          tools = cached.tools
+        const cached = this.toolsCache.get(mcpId) ?? this.readPersistedToolsSnapshot(mcpId)
+        if (cached) {
+          this.toolsCache.set(mcpId, cached)
+          const stale = Date.now() - cached.timestamp >= this.TOOLS_CACHE_TTL
+
+          if (stale && mcpServer.type === 'streamableHttp') {
+            // Stale-while-revalidate: the last successfully advertised schemas
+            // are immediately usable by the Agent. Network discovery refreshes
+            // them without delaying the model's first token.
+            void this.loadMcpToolsFromSource(mcpServer, true).catch(error =>
+              logger.warn(`Unable to refresh stale MCP tools for ${mcpServer.name}:`, error as Error)
+            )
+          } else if (stale && mcpServer.type === 'inMemory') {
+            const tools = await this.loadMcpToolsFromSource(mcpServer, true)
+            return this.filterDisabledMcpTools(tools, mcpServer, includeDisabled)
+          }
+
+          logger.verbose(`Tools snapshot hit for MCP server: ${mcpId}`)
+          return this.filterDisabledMcpTools(cached.tools, mcpServer, includeDisabled)
         }
       }
 
-      // Fetch tools if not cached
-      if (tools.length === 0) {
-        if (mcpServer.type === 'inMemory') {
-          // Built-in definitions are shared static metadata. Bind every tool
-          // to the persisted server before caching it; historical definitions
-          // used generated placeholder server IDs, which made Agent discovery
-          // look up a server that could never exist.
-          tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
-            ...tool,
-            serverId: mcpServer.id,
-            serverName: mcpServer.name,
-            isBuiltIn: true
-          }))
-        } else if (mcpServer.type === 'streamableHttp') {
-          // External server - fetch via MCP protocol
-          if (!mcpServer.baseUrl) {
-            // No URL configured yet - return empty tools
-            return []
-          }
-          try {
-            tools = await mcpClientService.listTools(mcpServer)
-          } catch (error) {
-            logger.error(`Failed to list tools for ${mcpServer.name}:`, error as Error)
-            return []
-          }
-        } else if (mcpServer.type === 'sse') {
-          // SSE transport not yet supported
-          logger.warn(`SSE transport not yet supported for server: ${mcpServer.name}`)
-          return []
-        } else {
-          // Unknown type - try static config as fallback
-          tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
-            ...tool,
-            serverId: mcpServer.id,
-            serverName: mcpServer.name,
-            isBuiltIn: true
-          }))
-        }
-
-        // Cache all tools (unfiltered)
-        this.toolsCache.set(mcpId, { tools, timestamp: Date.now() })
-        logger.verbose(`Cached ${tools.length} tools for MCP server: ${mcpId}`)
-      }
-
-      // Return all tools if includeDisabled is true (for UI display)
-      if (includeDisabled) {
-        return tools
-      }
-
-      // Filter disabled tools for API usage
-      const filteredTools =
-        mcpServer.disabledTools && mcpServer.disabledTools.length > 0
-          ? tools.filter(tool => !mcpServer.disabledTools?.includes(tool.name))
-          : tools
-
-      return filteredTools
+      const tools = await this.loadMcpToolsFromSource(mcpServer, forceRefresh)
+      return this.filterDisabledMcpTools(tools, mcpServer, includeDisabled)
     } catch (error) {
       logger.error(`Failed to get MCP tools for ${mcpId}:`, error as Error)
       return []
     }
+  }
+
+  /** Store a successful tools/list response in memory and durable MMKV cache. */
+  public cacheMcpTools(mcpId: string, tools: MCPTool[], timestamp = Date.now()): void {
+    const entry: McpToolsCacheEntry = { tools, timestamp }
+    this.toolsCache.set(mcpId, entry)
+
+    try {
+      const snapshot: PersistedMcpToolsSnapshot = { version: 1, ...entry }
+      storage.set(getMcpToolsSnapshotKey(mcpId), JSON.stringify(snapshot))
+    } catch (error) {
+      // The in-memory cache is still valid. A storage pressure/corruption issue
+      // must never make MCP discovery fail for the current conversation.
+      logger.warn(`Unable to persist MCP tools snapshot for ${mcpId}:`, error as Error)
+    }
+  }
+
+  private readPersistedToolsSnapshot(mcpId: string): McpToolsCacheEntry | null {
+    const key = getMcpToolsSnapshotKey(mcpId)
+    try {
+      const raw = storage.getString(key)
+      if (!raw) return null
+
+      const snapshot = JSON.parse(raw) as Partial<PersistedMcpToolsSnapshot>
+      if (
+        snapshot.version !== 1 ||
+        !Array.isArray(snapshot.tools) ||
+        typeof snapshot.timestamp !== 'number' ||
+        !Number.isFinite(snapshot.timestamp)
+      ) {
+        try {
+          storage.delete(key)
+        } catch {
+          // A broken cache backend should degrade to protocol discovery.
+        }
+        return null
+      }
+
+      return { tools: snapshot.tools as MCPTool[], timestamp: snapshot.timestamp }
+    } catch (error) {
+      try {
+        storage.delete(key)
+      } catch {
+        // Keep the original parse/storage error as the useful diagnostic.
+      }
+      logger.warn(`Discarded unreadable MCP tools snapshot for ${mcpId}:`, error as Error)
+      return null
+    }
+  }
+
+  private async loadMcpToolsFromSource(mcpServer: MCPServer, forceClientRefresh: boolean): Promise<MCPTool[]> {
+    const existingLoad = this.toolsLoadPromises.get(mcpServer.id)
+    if (existingLoad) return existingLoad
+
+    const generation = this.toolsCacheGenerations.get(mcpServer.id) ?? 0
+    const loadPromise = (async () => {
+      let tools: MCPTool[]
+      if (mcpServer.type === 'inMemory') {
+        // Built-in definitions are shared static metadata. Bind every tool to
+        // the real persisted server ID before caching it.
+        tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
+          ...tool,
+          serverId: mcpServer.id,
+          serverName: mcpServer.name,
+          isBuiltIn: true
+        }))
+      } else if (mcpServer.type === 'streamableHttp') {
+        if (!mcpServer.baseUrl) tools = []
+        else {
+          if (forceClientRefresh) mcpClientService.invalidateToolsCache(mcpServer.id)
+          tools = await mcpClientService.listTools(mcpServer)
+        }
+      } else if (mcpServer.type === 'sse') {
+        logger.warn(`SSE transport not yet supported for server: ${mcpServer.name}`)
+        tools = []
+      } else {
+        tools = (BUILTIN_TOOLS[mcpServer.id] || []).map(tool => ({
+          ...tool,
+          serverId: mcpServer.id,
+          serverName: mcpServer.name,
+          isBuiltIn: true
+        }))
+      }
+
+      if ((this.toolsCacheGenerations.get(mcpServer.id) ?? 0) === generation) {
+        this.cacheMcpTools(mcpServer.id, tools)
+        logger.verbose(`Cached ${tools.length} tools for MCP server: ${mcpServer.id}`)
+      }
+      return tools
+    })()
+
+    this.toolsLoadPromises.set(mcpServer.id, loadPromise)
+    try {
+      return await loadPromise
+    } finally {
+      if (this.toolsLoadPromises.get(mcpServer.id) === loadPromise) {
+        this.toolsLoadPromises.delete(mcpServer.id)
+      }
+    }
+  }
+
+  private filterDisabledMcpTools(tools: MCPTool[], server: MCPServer, includeDisabled: boolean): MCPTool[] {
+    if (includeDisabled || !server.disabledTools?.length) return tools
+    return tools.filter(tool => !server.disabledTools?.includes(tool.name))
   }
 
   /**
@@ -410,9 +499,27 @@ export class McpService {
   public invalidateToolsCache(mcpId?: string): void {
     if (mcpId) {
       this.toolsCache.delete(mcpId)
+      this.toolsLoadPromises.delete(mcpId)
+      this.toolsCacheGenerations.set(mcpId, (this.toolsCacheGenerations.get(mcpId) ?? 0) + 1)
+      try {
+        storage.delete(getMcpToolsSnapshotKey(mcpId))
+      } catch (error) {
+        logger.warn(`Unable to delete MCP tools snapshot for ${mcpId}:`, error as Error)
+      }
       logger.verbose(`Invalidated tools cache for MCP server: ${mcpId}`)
     } else {
+      for (const id of new Set([...this.toolsCache.keys(), ...this.toolsLoadPromises.keys()])) {
+        this.toolsCacheGenerations.set(id, (this.toolsCacheGenerations.get(id) ?? 0) + 1)
+      }
       this.toolsCache.clear()
+      this.toolsLoadPromises.clear()
+      try {
+        for (const key of storage.getAllKeys()) {
+          if (key.startsWith(MCP_TOOLS_SNAPSHOT_PREFIX)) storage.delete(key)
+        }
+      } catch (error) {
+        logger.warn('Unable to delete persisted MCP tools snapshots:', error as Error)
+      }
       logger.verbose('Invalidated all tools cache')
     }
   }
@@ -610,7 +717,7 @@ export class McpService {
     this.allMcpServersCache.clear()
     this.allMcpServersCacheTimestamp = null
     this.mcpCache.clear()
-    this.toolsCache.clear()
+    this.invalidateToolsCache()
     this.accessOrder = []
     logger.info('All MCP servers cache invalidated')
     this.notifyAllMcpServersSubscribers()
@@ -799,14 +906,15 @@ export class McpService {
       // Persist to database
       await mcpDatabase.upsertMcps([updatedServer])
 
-      // Invalidate tools cache when configuration changes that might affect tools
-      // (e.g., baseUrl, headers, type, disabledTools changes)
-      const connectionConfigurationChanged = 'baseUrl' in updates || 'headers' in updates || 'type' in updates
+      // Invalidate raw tool schemas only when the connection configuration
+      // changes. disabledTools is applied after every cache read, so toggling a
+      // tool does not require another network round trip.
+      const connectionConfigurationChanged =
+        ('baseUrl' in updates && updates.baseUrl !== currentServerData.baseUrl) ||
+        ('headers' in updates && !haveEqualHeaders(updates.headers, currentServerData.headers)) ||
+        ('type' in updates && updates.type !== currentServerData.type)
       if (connectionConfigurationChanged) {
         await mcpClientService.closeClient(mcpId)
-      }
-
-      if (connectionConfigurationChanged || 'disabledTools' in updates) {
         this.invalidateToolsCache(mcpId)
       }
 

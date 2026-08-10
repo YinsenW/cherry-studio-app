@@ -1,6 +1,7 @@
 import type { MCPServer } from '@/types/mcp'
 import type { MCPTool } from '@/types/tool'
 
+import { mcpClientService } from '../mcp/McpClientService'
 import { McpService } from '../McpService'
 
 const mockUpsertMcps = jest.fn()
@@ -38,6 +39,8 @@ function resetService(service: McpService) {
     allMcpServersCache: Map<string, MCPServer>
     allMcpServersCacheTimestamp: number | null
     toolsCache: Map<string, { tools: MCPTool[]; timestamp: number }>
+    toolsLoadPromises: Map<string, Promise<MCPTool[]>>
+    toolsCacheGenerations: Map<string, number>
     mcpServerSubscribers: Map<string, Set<() => void>>
     globalSubscribers: Set<() => void>
     allMcpServersSubscribers: Set<() => void>
@@ -47,9 +50,12 @@ function resetService(service: McpService) {
   internals.allMcpServersCache.clear()
   internals.allMcpServersCacheTimestamp = null
   internals.toolsCache.clear()
+  internals.toolsLoadPromises.clear()
+  internals.toolsCacheGenerations.clear()
   internals.mcpServerSubscribers.clear()
   internals.globalSubscribers.clear()
   internals.allMcpServersSubscribers.clear()
+  ;(global as typeof globalThis & { __mockStorageData?: Map<string, string> }).__mockStorageData?.clear()
 }
 
 describe('McpService marketplace persistence boundary', () => {
@@ -115,5 +121,102 @@ describe('McpService marketplace persistence boundary', () => {
       ])
     )
     expect(tools.every(tool => tool.serverId === builtin.id)).toBe(true)
+  })
+
+  it('reuses the last successful remote tool snapshot after an app-memory restart', async () => {
+    const remoteTools = [
+      {
+        id: 'remote-search',
+        serverId: server.id,
+        serverName: server.name,
+        name: 'search',
+        type: 'mcp',
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ] as MCPTool[]
+    jest.mocked(mcpClientService.listTools).mockResolvedValueOnce(remoteTools)
+    await service.createMcpServer(server)
+
+    await expect(service.getMcpTools(server.id)).resolves.toEqual(remoteTools)
+
+    const internals = service as unknown as { toolsCache: Map<string, unknown> }
+    internals.toolsCache.clear()
+    await expect(service.getMcpTools(server.id)).resolves.toEqual(remoteTools)
+
+    expect(mcpClientService.listTools).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns a stale remote snapshot immediately while refreshing it in the background', async () => {
+    const oldTools = [
+      {
+        id: 'old-search',
+        serverId: server.id,
+        serverName: server.name,
+        name: 'old_search',
+        type: 'mcp',
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ] as MCPTool[]
+    const refreshedTools = [{ ...oldTools[0], id: 'new-search', name: 'new_search' }] as MCPTool[]
+    await service.createMcpServer(server)
+    service.cacheMcpTools(server.id, oldTools, Date.now() - 10 * 60_000)
+
+    let finishRefresh: ((tools: MCPTool[]) => void) | undefined
+    jest.mocked(mcpClientService.listTools).mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRefresh = resolve
+        })
+    )
+
+    await expect(service.getMcpTools(server.id)).resolves.toEqual(oldTools)
+    expect(mcpClientService.listTools).toHaveBeenCalledTimes(1)
+
+    finishRefresh?.(refreshedTools)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(service.getMcpTools(server.id)).resolves.toEqual(refreshedTools)
+  })
+
+  it('removes the durable tool snapshot when a server configuration is invalidated', async () => {
+    await service.createMcpServer(server)
+    service.cacheMcpTools(server.id, [])
+    const storageData = (global as typeof globalThis & { __mockStorageData?: Map<string, string> }).__mockStorageData
+    expect([...storageData!.keys()].some(key => key.endsWith(server.id))).toBe(true)
+
+    service.invalidateToolsCache(server.id)
+
+    expect([...storageData!.keys()].some(key => key.endsWith(server.id))).toBe(false)
+  })
+
+  it('keeps tool schemas hot when a full UI payload only changes active and disabled state', async () => {
+    const remoteTools = [
+      {
+        id: 'remote-search',
+        serverId: server.id,
+        serverName: server.name,
+        name: 'search',
+        type: 'mcp',
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ] as MCPTool[]
+    jest.mocked(mcpClientService.listTools).mockResolvedValueOnce(remoteTools)
+    await service.createMcpServer(server)
+    await service.getMcpTools(server.id)
+    const fullUiUpdate = {
+      name: server.name,
+      type: server.type,
+      baseUrl: server.baseUrl,
+      headers: server.headers,
+      isActive: false,
+      disabledTools: ['search']
+    }
+
+    await service.updateMcpServer(server.id, fullUiUpdate)
+    await expect(service.getMcpTools(server.id)).resolves.toEqual([])
+
+    expect(mcpClientService.closeClient).not.toHaveBeenCalled()
+    expect(mcpClientService.listTools).toHaveBeenCalledTimes(1)
   })
 })
