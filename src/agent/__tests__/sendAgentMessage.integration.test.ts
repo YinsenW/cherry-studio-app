@@ -13,6 +13,39 @@ const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
 const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _model: Model) => [])
 const mockCreateMcpTools = jest.fn(async (_assistant: Assistant): Promise<unknown[]> => [])
+const mockRuntimePublishPendingOutputs = jest.fn(async () => [])
+const mockRuntimeFinish = jest.fn(async () => undefined)
+const mockRuntimeBackend = {
+  descriptor: {
+    id: 'agent-run-test',
+    name: 'Agent private runtime',
+    kind: 'app_sandbox',
+    rootUri: '',
+    readOnly: false,
+    createdAt: 1,
+    updatedAt: 1
+  },
+  capabilities: { persistent: true, readOnly: false, supportsMove: true, supportsTrash: true },
+  ensureReady: jest.fn(),
+  readText: jest.fn(),
+  writeText: jest.fn(),
+  editText: jest.fn(),
+  list: jest.fn(),
+  stat: jest.fn(),
+  search: jest.fn(),
+  mkdir: jest.fn(),
+  copy: jest.fn(),
+  move: jest.fn(),
+  trash: jest.fn(),
+  restore: jest.fn()
+}
+const mockRuntimeSession = {
+  backend: mockRuntimeBackend,
+  publishFile: jest.fn(),
+  publishPendingOutputs: mockRuntimePublishPendingOutputs,
+  finish: mockRuntimeFinish
+}
+const mockRuntimeStartRun = jest.fn(async (..._args: unknown[]) => mockRuntimeSession)
 let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -192,6 +225,11 @@ jest.mock('@database', () => ({
 jest.mock('@/agent/AgentService', () => ({
   AgentService: function (...args: ConstructorParameters<typeof MockAgentService>) {
     return new MockAgentService(...args)
+  }
+}))
+jest.mock('@/agent/workspace/AgentRuntimeService', () => ({
+  agentRuntimeService: {
+    startRun: (...args: unknown[]) => mockRuntimeStartRun(...args)
   }
 }))
 jest.mock('@/agent/messagesToPiContext', () => ({
@@ -383,8 +421,22 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(mockAgentConstruction).toHaveBeenCalledWith(
       model,
       expect.any(Object),
-      expect.arrayContaining([expect.objectContaining({ name: 'mcp_exa_web_search' })])
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'read' }),
+        expect.objectContaining({ name: 'bash' }),
+        expect.objectContaining({ name: 'publish_file' }),
+        expect.objectContaining({ name: 'mcp_exa_web_search' })
+      ])
     )
+    expect(mockRuntimeStartRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        topicId: message.topicId,
+        userMessage: expect.objectContaining({ id: message.id }),
+        assistantMessageId: assistantMessage?.id
+      })
+    )
+    expect(mockRuntimePublishPendingOutputs).toHaveBeenCalledTimes(1)
+    expect(mockRuntimeFinish).toHaveBeenCalledWith('success', undefined)
     expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
     expect(textBlock).toMatchObject({ content: '模拟响应', status: MessageBlockStatus.SUCCESS })
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })

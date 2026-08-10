@@ -67,7 +67,12 @@ describe('mobile agent workspace contract', () => {
   })
 
   it('keeps native snapshot URIs out of model-visible mutation results', async () => {
-    const [read, write, edit, workspace] = createMobileWorkspaceTools(backend, { topicId: 'topic-test' })
+    const publishFile = jest.fn(async () => ({ artifactId: 'artifact-1', displayName: 'result.txt' }))
+    const [read, write, edit, workspace, bash, publish] = createMobileWorkspaceTools(
+      backend,
+      { topicId: 'topic-test' },
+      { publishFile }
+    )
 
     const readResult = await read.execute('read-call', { path: 'notes/today.md' })
     expect(backend.readText).toHaveBeenCalledWith('notes/today.md', undefined, undefined)
@@ -100,5 +105,14 @@ describe('mobile agent workspace contract', () => {
     // The pwd result contains only a logical path and display name, never the
     // native root URI.
     expect(JSON.stringify(await workspace.execute('workspace-call-2', { action: 'pwd' }))).not.toContain('file:///')
+
+    const pwdResult = await bash.execute('bash-call', { command: 'pwd' })
+    expect(JSON.stringify(pwdResult)).toContain('inputs')
+    await expect(bash.execute('bash-unsupported', { command: 'python script.py' })).rejects.toThrow(
+      'UNSUPPORTED_COMMAND'
+    )
+
+    await publish.execute('publish-call', { path: 'outputs/result.txt' })
+    expect(publishFile).toHaveBeenCalledWith({ path: 'outputs/result.txt' })
   })
 })

@@ -8,11 +8,13 @@ jest.mock('@/componentsV2/base/Dialog/useDialogManager', () => ({
 // eslint-disable-next-line import/first
 import { ToolApprovalCoordinator } from '../ToolApprovalCoordinator'
 
-const context = (name: string, args: unknown) =>
+const context = (name: string, args: unknown, isPrivate = false) =>
   ({
     toolCall: { name },
     args,
-    context: { systemPrompt: 'mobile contract workspace-id:workspace-test' }
+    context: {
+      systemPrompt: `mobile contract workspace-id:workspace-test workspace-private:${isPrivate ? 'true' : 'false'}`
+    }
   }) as any
 
 const flushDynamicImport = () => new Promise<void>(resolve => setTimeout(resolve, 0))
@@ -61,5 +63,17 @@ describe('ToolApprovalCoordinator', () => {
     expect(mockPresentDialog).toHaveBeenCalledTimes(2)
     await mockPresentDialog.mock.calls[1][1].onCancel()
     await expect(move).resolves.toMatchObject({ block: true })
+  })
+
+  it('does not interrupt private runtime mutations with user-facing folder approvals', async () => {
+    const coordinator = new ToolApprovalCoordinator()
+    await expect(coordinator.beforeToolCall(context('write', { path: 'state/plan.md' }, true))).resolves.toBeUndefined()
+    await expect(
+      coordinator.beforeToolCall(context('bash', { command: 'rm scratch/temp.txt' }, true))
+    ).resolves.toBeUndefined()
+    await expect(
+      coordinator.beforeToolCall(context('publish_file', { path: 'outputs/report.txt' }, true))
+    ).resolves.toBeUndefined()
+    expect(mockPresentDialog).not.toHaveBeenCalled()
   })
 })

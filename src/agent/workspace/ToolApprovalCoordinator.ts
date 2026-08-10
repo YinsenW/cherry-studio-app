@@ -17,12 +17,13 @@ type ApprovalRequest = {
 
 function isReadOnlyTool(name: string, args: any): boolean {
   if (name === 'read') return true
+  if (name === 'bash') return /^(pwd|ls|tree|find|cat|head|tail|grep|rg|wc|stat)(\s|$)/.test(args?.command ?? '')
   if (name !== 'workspace') return false
   return ['pwd', 'list', 'tree', 'stat', 'search'].includes(args?.action)
 }
 
 function isMobileWorkspaceTool(name: string): boolean {
-  return name === 'read' || name === 'write' || name === 'edit' || name === 'workspace'
+  return ['read', 'write', 'edit', 'workspace', 'bash', 'publish_file'].includes(name)
 }
 
 function isDestructiveTool(name: string, args: any): boolean {
@@ -50,6 +51,7 @@ export class ToolApprovalCoordinator {
     const name = context.toolCall.name
     const args = context.args as any
     if (!isMobileWorkspaceTool(name)) return undefined
+    if (/workspace-private:true/.test(context.context.systemPrompt)) return undefined
     if (isReadOnlyTool(name, args)) return undefined
 
     const workspaceId = this.workspaceIdFromContext(context) ?? 'default-mobile-workspace'

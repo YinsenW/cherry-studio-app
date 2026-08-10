@@ -34,6 +34,8 @@ import { createAgentEventToChunk } from './agentToChunk'
 import { messagesToPiContext, messageToPiUserMessage } from './messagesToPiContext'
 import { aiSdkToolToAgentTool } from './toolAdapter'
 import { buildAgentSystemPrompt } from './workspace/agentPrompt'
+import type { AgentRuntimeSession } from './workspace/AgentRuntimeService'
+import { agentRuntimeService } from './workspace/AgentRuntimeService'
 import { createMobileWorkspaceTools } from './workspace/mobileWorkspaceTools'
 import { ToolApprovalCoordinator } from './workspace/ToolApprovalCoordinator'
 import type { WorkspaceBackend } from './workspace/types'
@@ -151,7 +153,8 @@ function shouldLoadAgentTools(assistant: Assistant): boolean {
 async function loadAgentTools(
   assistant: Assistant,
   topicId?: Topic['id'],
-  providedWorkspaceBackend?: WorkspaceBackend | null
+  providedWorkspaceBackend?: WorkspaceBackend | null,
+  runtimeSession?: AgentRuntimeSession | null
 ): Promise<AgentTool[]> {
   if (!shouldLoadAgentTools(assistant)) {
     return []
@@ -184,7 +187,9 @@ async function loadAgentTools(
 
   let mobileWorkspaceTools: AgentTool[] = []
   if (providedWorkspaceBackend) {
-    mobileWorkspaceTools = createMobileWorkspaceTools(providedWorkspaceBackend, topicId ? { topicId } : undefined)
+    mobileWorkspaceTools = createMobileWorkspaceTools(providedWorkspaceBackend, topicId ? { topicId } : undefined, {
+      ...(runtimeSession ? { publishFile: runtimeSession.publishFile.bind(runtimeSession) } : {})
+    })
   } else if (providedWorkspaceBackend === undefined && topicId) {
     try {
       const workspaceBackend = await workspaceService.getBackendForTopic(topicId)
@@ -216,6 +221,9 @@ export async function runAgentSession(
   let unsubscribeAgentEvents: (() => void) | null = null
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   let abortAgent: (() => void) | null = null
+  let runtimeSession: AgentRuntimeSession | null = null
+  let runOutcome: 'success' | 'error' | 'aborted' = 'error'
+  let runError: Error | null = null
   const resolvedAssistant = resolveAgentAssistant(assistant)
   // Keep "allow this session" scoped to one agent run. A global singleton
   // would accidentally carry a previous approval into a later conversation.
@@ -263,14 +271,20 @@ export async function runAgentSession(
     let workspaceBackend: WorkspaceBackend | null = null
     if (canUseAgentTools) {
       try {
-        workspaceBackend = await workspaceService.getBackendForTopic(topicId)
+        runtimeSession = await agentRuntimeService.startRun({
+          topicId,
+          userMessage,
+          assistantMessageId: assistantMessage.id,
+          historyMessages: filteredMessages
+        })
+        workspaceBackend = runtimeSession.backend
       } catch (error) {
         // A database migration, native file-system permission, or an older
         // test/runtime may temporarily make the workspace unavailable. The
         // core agent remains useful with its other tools; do not fail the
         // whole conversation just because the optional mobile filesystem is
         // unavailable.
-        logger.warn('Agent will continue without mobile workspace tools:', error as Error)
+        logger.warn('Agent will continue without private mobile runtime tools:', error as Error)
       }
     }
     const workspace =
@@ -284,7 +298,9 @@ export async function runAgentSession(
         createdAt: 0,
         updatedAt: 0
       } as const)
-    const tools = canUseAgentTools ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend) : []
+    const tools = canUseAgentTools
+      ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend, runtimeSession)
+      : []
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,
@@ -335,6 +351,22 @@ export async function runAgentSession(
       await streamProcessor.drain()
     }
 
+    if (
+      runtimeSession &&
+      eventAdapter.getState().agentEnded &&
+      streamProcessor.getTerminalStatus() === AssistantMessageStatus.SUCCESS
+    ) {
+      try {
+        await runtimeSession.publishPendingOutputs()
+      } catch (error) {
+        const publicationError = new Error('Agent completed, but one or more output files could not be published.', {
+          cause: error
+        })
+        ;(publicationError as Error & { code: string }).code = 'AGENT_ARTIFACT_PUBLISH_FAILED'
+        throw publicationError
+      }
+    }
+
     const persistedMessage = await messageDatabase.getMessageById(assistantMessage.id)
     if (
       !persistedMessage ||
@@ -347,10 +379,14 @@ export async function runAgentSession(
         new Error('The agent session finished without persisting a terminal message state.')
       )
     }
+    const finalMessage = await messageDatabase.getMessageById(assistantMessage.id)
+    runOutcome = finalMessage?.status === AssistantMessageStatus.SUCCESS ? 'success' : 'error'
   } catch (error) {
     logger.error('Error in agent session:', error as Error)
     // 让错误在聊天 UI 可见（不再静默无响应）
     const sessionError = error instanceof Error ? error : new Error(String(error))
+    runError = sessionError
+    runOutcome = isAbortError(sessionError) ? 'aborted' : 'error'
     await streamProcessor?.({
       type: ChunkType.ERROR,
       error: sessionError
@@ -361,7 +397,8 @@ export async function runAgentSession(
     if (
       !persistedMessage ||
       persistedMessage.status === AssistantMessageStatus.PENDING ||
-      persistedMessage.status === AssistantMessageStatus.PROCESSING
+      persistedMessage.status === AssistantMessageStatus.PROCESSING ||
+      (sessionError as Error & { code?: string }).code === 'AGENT_ARTIFACT_PUBLISH_FAILED'
     ) {
       await persistFallbackAgentError(assistantMessage, topicId, sessionError)
     }
@@ -373,6 +410,14 @@ export async function runAgentSession(
       removeAbortController(userMessage.id, abortAgent)
     }
     unsubscribeAgentEvents?.()
+
+    if (runtimeSession) {
+      try {
+        await runtimeSession.finish(runOutcome, runError?.message)
+      } catch (error) {
+        logger.warn('Unable to finalize private Agent runtime:', error as Error)
+      }
+    }
 
     // 收尾：与普通聊天路径一致，必须复位 loading 并触发话题命名
     try {

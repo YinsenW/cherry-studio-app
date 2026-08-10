@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, lt } from 'drizzle-orm'
 
 import type { WorkspaceDescriptor } from '@/agent/workspace/types'
 import { loggerService } from '@/services/LoggerService'
@@ -104,6 +104,14 @@ export async function recordAgentFileOperation(operation: {
   })
 }
 
+export async function deleteAgentFileOperationsByTopic(topicId: string) {
+  return db.delete(agentFileOperations).where(eq(agentFileOperations.topic_id, topicId))
+}
+
+export async function pruneAgentFileOperations(before: number) {
+  return db.delete(agentFileOperations).where(lt(agentFileOperations.created_at, before))
+}
+
 export const agentWorkspaceQueries = {
   upsertAgentWorkspace,
   getAgentWorkspaceById,
@@ -111,5 +119,7 @@ export const agentWorkspaceQueries = {
   deleteAgentWorkspace,
   bindAgentWorkspaceToTopic,
   getAgentWorkspaceBinding,
-  recordAgentFileOperation
+  recordAgentFileOperation,
+  deleteAgentFileOperationsByTopic,
+  pruneAgentFileOperations
 }

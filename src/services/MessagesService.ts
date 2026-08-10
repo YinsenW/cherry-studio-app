@@ -22,6 +22,7 @@ import {
 import { findMainTextBlocks } from '@/utils/messageUtils/find'
 
 import { assistantService, getAssistantModel, getDefaultModel } from './AssistantService'
+import { deleteFiles } from './FileService'
 import { BlockManager, createCallbacks } from './messageStreaming'
 import { getAssistantProvider } from './ProviderService'
 import type { StreamProcessorCallbacks } from './StreamProcessingService'
@@ -521,34 +522,42 @@ export async function saveMessageAndBlocksToDB(message: Message, blocks: Message
  * 批量清理多个消息块。
  */
 export async function cleanupMultipleBlocks(blockIds: string[]) {
-  // blockIds.forEach(id => {
-  //   cancelThrottledBlockUpdate(id)
-  // })
+  if (blockIds.length === 0) return
 
-  // const getBlocksFiles = async (blockIds: string[]) => {
-  //   const blocks = await Promise.all(blockIds.map(id => messageBlockDatabase.getBlockById(id)))
+  const blocks = await Promise.all(blockIds.map(id => messageBlockDatabase.getBlockById(id)))
+  const files = blocks
+    .filter((block): block is MessageBlock => block !== null)
+    .filter(block => block.type === MessageBlockType.FILE || block.type === MessageBlockType.IMAGE)
+    .filter(block => Boolean(block.metadata?.agentArtifact))
+    .map(block => block.file)
+    .filter((file): file is FileMetadata => file !== undefined)
 
-  //   const files = blocks
-  //     .filter((block): block is MessageBlock => block !== null)
-  //     .filter(block => block.type === MessageBlockType.FILE || block.type === MessageBlockType.IMAGE)
-  //     .map(block => block.file)
-  //     .filter((file): file is FileMetadata => file !== undefined)
-  //   return isEmpty(files) ? [] : files
-  // }
+  await messageBlockDatabase.removeManyBlocks(blockIds)
 
-  // const cleanupFiles = async (files: FileMetadata[]) => {
-  //   await Promise.all(files.map(file => FileManager.deleteFile(file.id, false)))
-  // }
-
-  // getBlocksFiles(blockIds).then(cleanupFiles)
-
-  if (blockIds.length > 0) {
-    await messageBlockDatabase.removeManyBlocks(blockIds)
+  if (files.length === 0) return
+  try {
+    const remainingBlocks = await messageBlockDatabase.getAllBlocks()
+    const remainingFileIds = new Set(
+      remainingBlocks
+        .filter(block => block.type === MessageBlockType.FILE || block.type === MessageBlockType.IMAGE)
+        .map(block => block.file?.id)
+        .filter((id): id is string => Boolean(id))
+    )
+    const unreferencedFiles = [...new Map(files.map(file => [file.id, file])).values()].filter(
+      file => !remainingFileIds.has(file.id)
+    )
+    await deleteFiles(unreferencedFiles)
+  } catch (error) {
+    // Message deletion must not fail because best-effort artifact reclamation
+    // encountered an already-missing file or older database state.
+    logger.warn('Unable to reclaim one or more unreferenced message files:', error as Error)
   }
 }
 
 export async function deleteMessagesByTopicId(topicId: string): Promise<void> {
   try {
+    const messages = await messageDatabase.getMessagesByTopicId(topicId)
+    await cleanupMultipleBlocks(messages.flatMap(message => message.blocks))
     return messageDatabase.deleteMessagesByTopicId(topicId)
   } catch (error) {
     logger.error('Error in deleteMessagesByTopicId:', error)
@@ -558,7 +567,8 @@ export async function deleteMessagesByTopicId(topicId: string): Promise<void> {
 
 export async function deleteMessageById(messageId: string): Promise<void> {
   try {
-    // await deleteBlocksByMessageId(messageId)
+    const message = await messageDatabase.getMessageById(messageId)
+    if (message) await cleanupMultipleBlocks(message.blocks)
     return messageDatabase.deleteMessageById(messageId)
   } catch (error) {
     logger.error('Error in deleteMessageById:', error)

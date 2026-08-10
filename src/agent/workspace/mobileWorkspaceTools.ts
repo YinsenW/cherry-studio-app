@@ -1,5 +1,6 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 
+import { createMobileBashTool } from './mobileBashRuntime'
 import type { WorkspaceBackend, WorkspaceMutationContext } from './types'
 
 const objectSchema = (properties: Record<string, unknown>, required: string[] = []) =>
@@ -20,7 +21,10 @@ function actionError(action: string): never {
 
 export function createMobileWorkspaceTools(
   backend: WorkspaceBackend,
-  baseContext: WorkspaceMutationContext = {}
+  baseContext: WorkspaceMutationContext = {},
+  options: {
+    publishFile?: (input: { path: string; displayName?: string; mimeType?: string }) => Promise<unknown>
+  } = {}
 ): AgentTool[] {
   const read: AgentTool = {
     name: 'read',
@@ -237,5 +241,33 @@ export function createMobileWorkspaceTools(
     }
   }
 
-  return [read, write, edit, workspace]
+  const tools = [read, write, edit, workspace, createMobileBashTool(backend, baseContext)]
+
+  if (options.publishFile) {
+    tools.push({
+      name: 'publish_file',
+      label: 'publish_file',
+      description:
+        'Publish one completed file from outputs to the current assistant message so the user can open or share it. Internal state, scratch files and inputs cannot be published directly.',
+      parameters: objectSchema(
+        {
+          path: { type: 'string', description: 'Logical path under outputs' },
+          displayName: { type: 'string', description: 'Optional user-visible file name' },
+          mimeType: { type: 'string', description: 'Optional MIME type hint; actual file type is validated locally' }
+        },
+        ['path']
+      ),
+      executionMode: 'sequential',
+      execute: async (_callId, args) => {
+        const input = args as { path: string; displayName?: string; mimeType?: string }
+        const result = await options.publishFile!(input)
+        return {
+          content: [{ type: 'text', text: text(result) }],
+          details: result
+        }
+      }
+    })
+  }
+
+  return tools
 }

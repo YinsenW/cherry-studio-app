@@ -1,10 +1,12 @@
 import {
   agentWorkspaceQueries,
   bindAgentWorkspaceToTopic,
+  deleteAgentFileOperationsByTopic,
   deleteAgentWorkspace,
   getAgentWorkspaceBinding,
   getAgentWorkspaceById,
   getAgentWorkspaces,
+  pruneAgentFileOperations,
   recordAgentFileOperation,
   upsertAgentWorkspace
 } from '@db/queries/agentWorkspaces.queries'
@@ -19,7 +21,9 @@ export const agentWorkspaceDatabase = {
   bindToTopic: (topicId: string, workspaceId: string, relativePath = '.') =>
     bindAgentWorkspaceToTopic(topicId, workspaceId, relativePath),
   getBinding: (topicId: string) => getAgentWorkspaceBinding(topicId),
-  recordOperation: recordAgentFileOperation
+  recordOperation: recordAgentFileOperation,
+  deleteOperationsForTopic: deleteAgentFileOperationsByTopic,
+  pruneOperations: pruneAgentFileOperations
 }
 
 // Keep this named export for callers that prefer the database module pattern.

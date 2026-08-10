@@ -2,7 +2,7 @@ import React from 'react'
 
 import XStack from '@/componentsV2/layout/XStack'
 
-import { McpButton, MentionButton, ThinkButton, WorkspaceButton } from '../buttons'
+import { McpButton, MentionButton, ThinkButton } from '../buttons'
 import { useMessageInput } from '../context/MessageInputContext'
 
 export const AccessoryBar: React.FC = () => {
@@ -18,7 +18,6 @@ export const AccessoryBar: React.FC = () => {
         updateAssistant={updateAssistant}
       />
       <McpButton assistant={assistant} updateAssistant={updateAssistant} />
-      <WorkspaceButton />
     </XStack>
   )
 }

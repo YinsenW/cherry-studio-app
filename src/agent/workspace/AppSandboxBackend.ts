@@ -44,6 +44,17 @@ type ResolvedFileReference = {
   file: File | null
 }
 
+export type AppSandboxBackendOptions = {
+  /**
+   * Runtime workspaces keep snapshots and trash beside their own lifecycle
+   * root. This prevents per-run scratch data from leaking into durable app
+   * storage while preserving the legacy workspace default.
+   */
+  stateRootUri?: string
+  /** Maximum reversible write snapshots retained for this backend. */
+  maxSnapshots?: number
+}
+
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength
 }
@@ -132,14 +143,20 @@ export class AppSandboxBackend implements WorkspaceBackend {
   private readonly mutationQueue = new Map<string, Promise<void>>()
   private readonly trashEntries = new Map<string, TrashEntry>()
   private trashManifestLoaded = false
+  private readonly maxSnapshots: number
 
-  constructor(descriptor: WorkspaceDescriptor) {
+  constructor(descriptor: WorkspaceDescriptor, options: AppSandboxBackendOptions = {}) {
     this.descriptor = descriptor
     this.root =
       descriptor.kind === 'app_sandbox'
-        ? new Directory(Paths.document, 'AgentWorkspaces', descriptor.id, 'root')
+        ? descriptor.rootUri
+          ? new Directory(descriptor.rootUri)
+          : new Directory(Paths.document, 'AgentWorkspaces', descriptor.id, 'root')
         : new Directory(descriptor.rootUri)
-    this.stateRoot = new Directory(Paths.document, 'AgentState', descriptor.id)
+    this.stateRoot = options.stateRootUri
+      ? new Directory(options.stateRootUri)
+      : new Directory(Paths.document, 'AgentState', descriptor.id)
+    this.maxSnapshots = Math.max(0, options.maxSnapshots ?? 50)
     // Keep external-folder trash on the same provider as the selected folder.
     // Android SAF providers commonly reject a copy from content:// into the
     // app-private file:// directory. The manifest remains private so the
@@ -161,6 +178,7 @@ export class AppSandboxBackend implements WorkspaceBackend {
           : 'The selected folder is no longer available. Pick it again or choose the mobile workspace.'
       throw new Error(accessMessage)
     }
+    if (this.descriptor.readOnly) return
     if (this.isSafWorkspace()) {
       const existingTrash = this.findChild(this.root, '.cherry-agent-trash')
       if (existingTrash) {
@@ -475,6 +493,49 @@ export class AppSandboxBackend implements WorkspaceBackend {
     })
   }
 
+  /**
+   * Resolve a validated logical file to an internal File handle. Callers must
+   * never put its URI in model-visible output; it exists for binary-safe input
+   * mounting and artifact publication only.
+   */
+  async getFileHandle(path: string): Promise<File> {
+    await this.ensureReady()
+    const normalized = this.filePath(path, false)
+    const reference = await this.resolveFileReference(normalized)
+    if (!reference.file) throw new Error(`File not found: ${normalized}`)
+    this.assertFileExists(reference.file, normalized)
+    return reference.file
+  }
+
+  /** Binary-safe cross-mount import used by the private runtime router. */
+  async copyFromFile(
+    source: File,
+    destination: string,
+    context?: WorkspaceMutationContext
+  ): Promise<{ source: string; destination: string; operationId: string }> {
+    const normalized = this.filePath(destination, false)
+    this.assertWritable()
+    if (!source.exists) throw new Error('Source file no longer exists.')
+
+    return this.withMutation(`import->${normalized}`, async () => {
+      await this.ensureReady()
+      const parent = await this.ensureParentDirectory(normalized)
+      const destinationName = splitWorkspacePath(normalized, false).pop()!
+      if (this.findChild(parent, destinationName)) {
+        throw new Error(`Destination already exists: ${normalized}`)
+      }
+      const target = this.isSafWorkspace()
+        ? this.createFileInDirectory(parent, destinationName, source.type ?? 'application/octet-stream')
+        : new File(parent, destinationName)
+      if (this.isSafWorkspace()) target.write(await source.bytes())
+      else source.copy(target)
+
+      const result = { source: '[internal-file]', destination: normalized, operationId: uuid() }
+      await this.recordOperation('copy', normalized, result, context, undefined, normalized)
+      return result
+    })
+  }
+
   private async copyOrMove(
     sourcePath: string,
     destinationPath: string,
@@ -665,13 +726,14 @@ export class AppSandboxBackend implements WorkspaceBackend {
   }
 
   private async snapshotFile(path: string, file: File, operationId: string): Promise<string | undefined> {
-    if (!file.exists || file.size > MAX_SNAPSHOT_BYTES) return undefined
+    if (this.maxSnapshots === 0 || !file.exists || file.size > MAX_SNAPSHOT_BYTES) return undefined
     const snapshotDirectory = new Directory(this.stateRoot, 'snapshots', operationId)
     snapshotDirectory.create({ intermediates: true, idempotent: true })
     const snapshotFile = new File(snapshotDirectory, path.replaceAll('/', '__'))
     try {
       if (this.isSafWorkspace()) snapshotFile.write(await file.bytes())
       else file.copy(snapshotFile)
+      this.pruneSnapshots()
       return snapshotFile.uri
     } catch (error) {
       // Some SAF providers do not permit cross-provider copies. Snapshots are
@@ -679,6 +741,16 @@ export class AppSandboxBackend implements WorkspaceBackend {
       logger.warn('Unable to create an agent workspace snapshot:', error as Error)
       return undefined
     }
+  }
+
+  private pruneSnapshots(): void {
+    const snapshotsRoot = new Directory(this.stateRoot, 'snapshots')
+    if (!snapshotsRoot.exists) return
+    const snapshots = snapshotsRoot
+      .list()
+      .filter((entry): entry is Directory => entry instanceof Directory)
+      .sort((left, right) => (right.info().modificationTime ?? 0) - (left.info().modificationTime ?? 0))
+    for (const snapshot of snapshots.slice(this.maxSnapshots)) snapshot.delete()
   }
 
   private async relocate(source: File | Directory, destination: File | Directory, move: boolean): Promise<void> {

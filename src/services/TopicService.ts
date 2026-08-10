@@ -436,9 +436,24 @@ export class TopicService {
       logger.verbose(`Removed topic from cache: ${topicId}`)
     }
 
+    let agentCleanup: { topicId: string; topicStorageKey: string; artifactFileIds: string[] } | null = null
+    try {
+      const { agentRuntimeService } = await import('@/agent/workspace/AgentRuntimeService')
+      agentCleanup = await agentRuntimeService.prepareTopicCleanup(topicId)
+    } catch (error) {
+      logger.warn('Unable to prepare Agent topic storage cleanup:', error as Error)
+    }
+
     try {
       // Delete from database
       await topicDatabase.deleteTopicById(topicId)
+
+      if (agentCleanup) {
+        const { agentRuntimeService } = await import('@/agent/workspace/AgentRuntimeService')
+        await agentRuntimeService.cleanupTopicStorage(agentCleanup).catch(error => {
+          logger.warn('Unable to clean Agent topic storage:', error as Error)
+        })
+      }
 
       // Notify topic-specific subscribers
       this.notifyTopicSubscribers(topicId)
@@ -628,9 +643,30 @@ export class TopicService {
       }
     })
 
+    const agentCleanups: { topicId: string; topicStorageKey: string; artifactFileIds: string[] }[] = []
+    try {
+      const { agentRuntimeService } = await import('@/agent/workspace/AgentRuntimeService')
+      for (const topic of affectedTopics) {
+        agentCleanups.push(await agentRuntimeService.prepareTopicCleanup(topic.id))
+      }
+    } catch (error) {
+      logger.warn('Unable to prepare Agent storage cleanup for assistant topics:', error as Error)
+    }
+
     try {
       // Delete from database
       await topicDatabase.deleteTopicsByAssistantId(assistantId)
+
+      if (agentCleanups.length > 0) {
+        const { agentRuntimeService } = await import('@/agent/workspace/AgentRuntimeService')
+        await Promise.all(
+          agentCleanups.map(cleanup =>
+            agentRuntimeService.cleanupTopicStorage(cleanup).catch(error => {
+              logger.warn('Unable to clean Agent topic storage:', error as Error)
+            })
+          )
+        )
+      }
 
       // Notify subscribers for all affected topics
       affectedTopicIds.forEach(topicId => {

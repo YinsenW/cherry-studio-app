@@ -2,7 +2,9 @@ import { loggerService } from '@/services/LoggerService'
 
 import { db } from '..'
 import {
+  agentArtifacts,
   agentFileOperations,
+  agentRuns,
   agentTopicWorkspaces,
   agentWorkspaces,
   assistants,
@@ -40,6 +42,10 @@ export async function clearAllTables(): Promise<void> {
       await tx.delete(agentTopicWorkspaces)
       await tx.delete(agentWorkspaces)
       logger.info('Cleared agent workspace tables')
+
+      await tx.delete(agentArtifacts)
+      await tx.delete(agentRuns)
+      logger.info('Cleared agent runtime tables')
 
       // 2. 删除消息（依赖于主题和助手）
       await tx.delete(messages)

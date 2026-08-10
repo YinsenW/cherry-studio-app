@@ -5,6 +5,7 @@ import { messageBlocks } from './messageBlocks'
 import { messages } from './messages'
 import { topics } from './topics'
 
+export * from './agentRuns'
 export * from './agentWorkspaces'
 export * from './assistants'
 export * from './files'

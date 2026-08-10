@@ -66,6 +66,21 @@ export class WorkspaceService {
     return this.getBackend((await this.getWorkspaceForTopic(topicId)).id)
   }
 
+  /**
+   * Existing topic bindings remain available as a read-only compatibility
+   * mount in the private runtime. New topics do not create a binding, so the
+   * folder picker is no longer part of the default Agent experience.
+   */
+  async getLegacyBackendForTopic(topicId: string): Promise<WorkspaceBackend | null> {
+    const binding = await agentWorkspaceDatabase.getBinding(topicId)
+    if (!binding) return null
+    const workspace = await agentWorkspaceDatabase.getWorkspaceById(binding.workspace_id)
+    if (!workspace) return null
+    const backend = new AppSandboxBackend({ ...workspace, readOnly: true })
+    await backend.ensureReady()
+    return backend
+  }
+
   async getWorkspaceForTopic(topicId: string): Promise<WorkspaceDescriptor> {
     const binding = await agentWorkspaceDatabase.getBinding(topicId)
     return this.getWorkspace(binding?.workspace_id)
