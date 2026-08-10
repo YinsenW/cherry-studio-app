@@ -30,6 +30,7 @@ import { isAbortError, serializeError } from '@/utils/error'
 import { createAssistantMessage, createErrorBlock, resetAssistantMessage } from '@/utils/messageUtils/create'
 import { findAllBlocks } from '@/utils/messageUtils/find'
 
+import { AgentActivityWatchdog } from './AgentActivityWatchdog'
 import { AgentService } from './AgentService'
 import { createAgentEventToChunk } from './agentToChunk'
 import { assertAgentUserMessageBudget, compactAgentContext } from './context/AgentContextBudget'
@@ -45,7 +46,8 @@ import { workspaceService } from './workspace/WorkspaceService'
 
 const logger = loggerService.withContext('sendAgentMessage')
 
-const AGENT_TIMEOUT_MS = 120_000
+const AGENT_IDLE_TIMEOUT_MS = 120_000
+const AGENT_TOOL_IDLE_TIMEOUT_MS = 5 * 60_000
 const AGENT_PROTOCOL_ERROR_MESSAGE = 'The agent session ended without a terminal event.'
 const EMPTY_PERSISTED_AGENT_RESPONSE_MESSAGE = 'The agent response contained no renderable content. Please retry.'
 
@@ -277,7 +279,7 @@ export async function runAgentSession(
 ) {
   let streamProcessor: ReturnType<typeof createStreamProcessor> | null = null
   let unsubscribeAgentEvents: (() => void) | null = null
-  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let activityWatchdog: AgentActivityWatchdog | null = null
   let abortAgent: (() => void) | null = null
   let runtimeSession: AgentRuntimeSession | null = null
   let runOutcome: 'success' | 'error' | 'aborted' = 'error'
@@ -389,13 +391,42 @@ export async function runAgentSession(
       resolvedAssistant,
       {
         toolExecution: 'parallel',
-        beforeToolCall: approvalCoordinator.beforeToolCall.bind(approvalCoordinator)
+        onActivity: () => activityWatchdog?.recordActivity(),
+        beforeToolCall: async (context, signal) => {
+          // A user may legitimately leave an approval dialog open or switch
+          // apps to inspect the target file. This is waiting for input, not a
+          // stalled Agent request, so exclude it from inactivity accounting.
+          activityWatchdog?.pause('tool-approval')
+          try {
+            return await approvalCoordinator.beforeToolCall(context, signal)
+          } finally {
+            activityWatchdog?.resume('tool-approval')
+          }
+        }
       }
     )
 
     // 5. 事件 → chunk → 现有块流
     const eventAdapter = createAgentEventToChunk(processChunk, { responseAlreadyCreated: true })
-    unsubscribeAgentEvents = agentService.subscribe(eventAdapter)
+    const activeToolCalls = new Set<string>()
+    unsubscribeAgentEvents = agentService.subscribe(async event => {
+      if (event.type === 'tool_execution_start') {
+        activeToolCalls.add(event.toolCallId)
+        activityWatchdog?.setIdleTimeoutMs(AGENT_TOOL_IDLE_TIMEOUT_MS)
+      } else if (event.type === 'tool_execution_end') {
+        activeToolCalls.delete(event.toolCallId)
+        if (activeToolCalls.size === 0) {
+          activityWatchdog?.setIdleTimeoutMs(AGENT_IDLE_TIMEOUT_MS)
+        }
+      }
+
+      // Every model delta, turn transition, tool start/update/end, and terminal
+      // event is proof of progress. Long multi-turn jobs can therefore run for
+      // as long as they remain active without acquiring a total runtime cap.
+      activityWatchdog?.recordActivity()
+      await eventAdapter(event)
+      activityWatchdog?.recordActivity()
+    })
 
     // 6. 中止：绑定到现有「暂停/停止」机制
     abortAgent = () => agentService.abort()
@@ -412,17 +443,47 @@ export async function runAgentSession(
     }
     assertAgentUserMessageBudget(userPrompt)
 
-    // 7. 超时兜底：普通聊天路径有 timeout:30000，agent 可能多轮，给 120s。
-    // 否则网络卡住时 prompt 永不返回 → 一直转圈。
-    await Promise.race([
-      agentService.prompt(userPrompt),
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          agentService.abort()
-          reject(new Error('Agent 响应超时（120s），已自动停止。请检查网络或重试。'))
-        }, AGENT_TIMEOUT_MS)
-      })
-    ])
+    // 7. Use an inactivity watchdog, not a wall-clock lifetime. Background
+    // suspension and user approval are paused; observable Agent progress
+    // renews the deadline. A genuinely silent request still terminates.
+    let rejectInactivity: ((error: Error) => void) | null = null
+    const inactivityPromise = new Promise<never>((_resolve, reject) => {
+      rejectInactivity = reject
+    })
+    activityWatchdog = new AgentActivityWatchdog({
+      idleTimeoutMs: AGENT_IDLE_TIMEOUT_MS,
+      onTimeout: () => {
+        const inactivityError = new Error(
+          'Agent 连续 120 秒没有收到模型输出或工具进展，已自动停止。请检查网络后重试。'
+        ) as Error & { code: string }
+        inactivityError.code = 'AGENT_INACTIVITY_TIMEOUT'
+        rejectInactivity?.(inactivityError)
+        agentService.abort()
+      },
+      onBackground: () => {
+        // React Native may suspend JS shortly after this callback. Flush the
+        // serial chunk queue and its latest throttled block while execution
+        // time is still available, so a later OS kill loses as little as
+        // possible.
+        void streamProcessor
+          ?.drain()
+          .then(async () => {
+            const activeBlockId = blockManager.activeBlockInfo?.id
+            if (activeBlockId) {
+              await cancelThrottledBlockUpdate(activeBlockId)
+            }
+          })
+          .catch(error => logger.warn('Unable to checkpoint Agent output before background suspension:', error))
+      }
+    })
+    activityWatchdog.start()
+
+    try {
+      await Promise.race([agentService.prompt(userPrompt), inactivityPromise])
+    } finally {
+      activityWatchdog.dispose()
+      activityWatchdog = null
+    }
 
     await streamProcessor.drain()
 
@@ -499,9 +560,7 @@ export async function runAgentSession(
       await persistFallbackAgentError(assistantMessage, topicId, sessionError)
     }
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-    }
+    activityWatchdog?.dispose()
     if (abortAgent) {
       removeAbortController(userMessage.id, abortAgent)
     }

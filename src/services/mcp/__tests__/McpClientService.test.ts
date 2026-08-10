@@ -395,10 +395,13 @@ describe('McpClientService', () => {
 
         const result = await mcpClientService.callTool(server, 'test-tool', { param: 'value' })
 
-        expect(mockCallTool).toHaveBeenCalledWith({
-          name: 'test-tool',
-          arguments: { param: 'value' }
-        })
+        expect(mockCallTool).toHaveBeenCalledWith(
+          {
+            name: 'test-tool',
+            arguments: { param: 'value' }
+          },
+          expect.objectContaining({ timeout: 30 * 60_000, resetTimeoutOnProgress: true })
+        )
         expect(result.isError).toBe(false)
         expect(result.content[0].text).toBe('Success result')
       })
@@ -466,9 +469,31 @@ describe('McpClientService', () => {
 
         expect(mockCallTool).toHaveBeenCalledWith(
           { name: 'structured-tool', arguments: {} },
-          { signal: controller.signal }
+          expect.objectContaining({
+            signal: controller.signal,
+            timeout: 30 * 60_000,
+            resetTimeoutOnProgress: true
+          })
         )
         expect(result.structuredContent).toEqual({ matches: [{ title: 'Cherry' }] })
+      })
+
+      it('honours a server tool timeout and forwards MCP progress', async () => {
+        const server = createMockServer({ timeout: 12 })
+        const onProgress = jest.fn()
+
+        await mcpClientService.callTool(server, 'long-tool', {}, undefined, onProgress)
+
+        const requestOptions = mockCallTool.mock.calls[0][1]
+        expect(requestOptions).toEqual(
+          expect.objectContaining({
+            timeout: 12_000,
+            resetTimeoutOnProgress: true,
+            onprogress: onProgress
+          })
+        )
+        requestOptions.onprogress({ progress: 1, total: 2, message: 'Halfway' })
+        expect(onProgress).toHaveBeenCalledWith({ progress: 1, total: 2, message: 'Halfway' })
       })
 
       it('should handle resource content type', async () => {

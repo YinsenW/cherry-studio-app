@@ -1,7 +1,7 @@
-import { count, eq, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, sql } from 'drizzle-orm'
 
 import { loggerService } from '@/services/LoggerService'
-import type { Message } from '@/types/message'
+import type { AssistantMessageStatus, Message } from '@/types/message'
 
 import { db } from '..'
 import { transformDbToMessage, transformMessageToDb } from '../mappers'
@@ -246,6 +246,35 @@ export async function getAllMessages(): Promise<Message[]> {
     })
   } catch (error) {
     logger.error(`Error getting all messages:`, error)
+    throw error
+  }
+}
+
+/**
+ * Fetch only assistant rows in one of the supplied lifecycle states.
+ * Startup recovery uses this instead of hydrating every historical message
+ * and block relation into memory.
+ */
+export async function getAssistantMessagesByStatuses(statuses: AssistantMessageStatus[]): Promise<Message[]> {
+  if (statuses.length === 0) return []
+
+  try {
+    const results = await db.query.messages.findMany({
+      where: and(eq(messages.role, 'assistant'), inArray(messages.status, statuses)),
+      with: {
+        blocks: {
+          columns: { id: true }
+        }
+      }
+    })
+
+    return results.map(result => {
+      const message = transformDbToMessage(result)
+      message.blocks = result.blocks.map(block => block.id)
+      return message
+    })
+  } catch (error) {
+    logger.error('Error getting assistant messages by status:', error)
     throw error
   }
 }

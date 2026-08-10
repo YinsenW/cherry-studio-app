@@ -2,6 +2,7 @@ import {
   deleteMessageById as _deleteMessageById,
   deleteMessagesByTopicId as _deleteMessagesByTopicId,
   getAllMessages as _getAllMessages,
+  getAssistantMessagesByStatuses as _getAssistantMessagesByStatuses,
   getHasMessagesWithTopicId as _getHasMessagesWithTopicId,
   getMessageById as _getMessageById,
   getMessagesByTopicId as _getMessagesByTopicId,
@@ -10,7 +11,7 @@ import {
   upsertMessages as _upsertMessages
 } from '@db/queries/messages.queries'
 
-import type { Message } from '@/types/message'
+import type { AssistantMessageStatus, Message } from '@/types/message'
 
 export async function upsertMessages(messages: Message | Message[]) {
   return _upsertMessages(messages)
@@ -48,6 +49,10 @@ export async function getAllMessages() {
   return _getAllMessages()
 }
 
+export async function getAssistantMessagesByStatuses(statuses: AssistantMessageStatus[]) {
+  return _getAssistantMessagesByStatuses(statuses)
+}
+
 export const messageDatabase = {
   upsertMessages,
   deleteMessagesByTopicId,
@@ -57,5 +62,6 @@ export const messageDatabase = {
   getMessageById,
   getMessagesByTopicId,
   getHasMessagesWithTopicId,
-  getAllMessages
+  getAllMessages,
+  getAssistantMessagesByStatuses
 }

@@ -73,7 +73,8 @@ describe('createMcpTools', () => {
       expect.objectContaining({ id: 'server:remote' }),
       'search.web/v2',
       { query: 'Cherry' },
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Function)
     )
   })
 
@@ -82,6 +83,30 @@ describe('createMcpTools', () => {
     const [tool] = await createMcpTools(assistant)
 
     await expect(tool.execute('call-1', {}, new AbortController().signal, jest.fn())).rejects.toThrow('remote failure')
+  })
+
+  it('forwards MCP progress into pi tool updates', async () => {
+    mockCallTool.mockImplementationOnce(
+      async (
+        _server: unknown,
+        _name: string,
+        _args: unknown,
+        _signal: AbortSignal,
+        onProgress: (progress: { progress: number; total?: number; message?: string }) => void
+      ) => {
+        onProgress({ progress: 3, total: 10, message: 'Indexing' })
+        return { content: [{ type: 'text', text: 'done' }], isError: false }
+      }
+    )
+    const [tool] = await createMcpTools(assistant)
+    const onUpdate = jest.fn()
+
+    await tool.execute('call-progress', {}, new AbortController().signal, onUpdate)
+
+    expect(onUpdate).toHaveBeenCalledWith({
+      content: [{ type: 'text', text: 'Indexing' }],
+      details: { progress: { progress: 3, total: 10, message: 'Indexing' } }
+    })
   })
 
   it('keeps valid tools when another discovered tool is malformed', async () => {

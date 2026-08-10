@@ -102,6 +102,23 @@ describe('createStreamFn simulated provider stream', () => {
     ])
   })
 
+  it('reports raw stream activity even when a provider part is not rendered as visible text', async () => {
+    async function* simulatedReasoningStream() {
+      yield { type: 'reasoning-delta', text: 'hidden reasoning token' }
+      yield { type: 'tool-input-delta', delta: '{"query"' }
+      yield { type: 'text-delta', text: '最终回复' }
+    }
+    mockStreamText.mockResolvedValue({ fullStream: simulatedReasoningStream() })
+    const onActivity = jest.fn()
+
+    const streamFn = createStreamFn(model, provider, undefined, undefined, onActivity)
+    streamFn({} as never, { systemPrompt: 'system', messages: [], tools: [] }, {})
+    await waitForEnd()
+
+    expect(onActivity).toHaveBeenCalledTimes(3)
+    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ type: 'text_delta', delta: '最终回复' }))
+  })
+
   it('forwards registered Agent tools to the provider request', async () => {
     async function* simulatedFullStream() {
       yield { type: 'text-delta', text: 'tool-aware response' }
