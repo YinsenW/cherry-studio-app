@@ -1,8 +1,6 @@
-import { TextDecoderStream, TextEncoderStream } from '@stardazed/streams-text-encoding'
 import structuredClone from '@ungap/structured-clone'
 import { Buffer } from 'buffer'
 import * as ExpoCrypto from 'expo-crypto'
-import { Platform } from 'react-native'
 
 // Polyfill btoa and atob for React Native
 if (typeof globalThis.btoa === 'undefined') {
@@ -47,50 +45,12 @@ if (!globalThis.crypto) {
   }
 }
 
-if (typeof globalThis.TextEncoder === 'undefined') {
-  class SimpleTextEncoder {
-    encode(input = '') {
-      const encoded = unescape(encodeURIComponent(input))
-      const result = new Uint8Array(encoded.length)
-      for (let i = 0; i < encoded.length; i++) {
-        result[i] = encoded.charCodeAt(i)
-      }
-      return result
-    }
-  }
-  globalThis.TextEncoder = SimpleTextEncoder
-}
-
-if (typeof globalThis.TextDecoder === 'undefined') {
-  class SimpleTextDecoder {
-    decode(input) {
-      if (!input) return ''
-      const bytes =
-        input instanceof ArrayBuffer
-          ? new Uint8Array(input)
-          : new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
-      let binary = ''
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i])
-      }
-      return decodeURIComponent(escape(binary))
-    }
-  }
-  globalThis.TextDecoder = SimpleTextDecoder
-}
-
-if (Platform.OS !== 'web') {
-  // This must be installed synchronously. The MCP v2 Streamable HTTP
-  // transport creates its SSE parser on the first request, which can happen
-  // before an async dynamic import has completed on a cold Hermes startup.
-  const { polyfillGlobal } = require('react-native/Libraries/Utilities/PolyfillFunctions')
-
-  if (!('structuredClone' in global)) {
-    polyfillGlobal('structuredClone', () => structuredClone)
-  }
-
-  polyfillGlobal('TextEncoderStream', () => TextEncoderStream)
-  polyfillGlobal('TextDecoderStream', () => TextDecoderStream)
+// Expo SDK 54 installs spec-compliant TextEncoder/TextDecoder and stream
+// variants from its WinterCG runtime before App modules execute. Do not
+// install the old URI-based decoder here: it cannot preserve a multi-byte
+// UTF-8 sequence split across native fetch chunks and can break MCP SSE JSON.
+if (!('structuredClone' in globalThis)) {
+  globalThis.structuredClone = structuredClone
 }
 
 export {}

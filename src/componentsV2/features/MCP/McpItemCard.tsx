@@ -50,9 +50,15 @@ export const McpItemCard: FC<McpItemCardProps> = ({
           duration: 4000
         })
       } else if (result.toolDiscoveryFailed || result.tools.length === 0) {
-        toast.show(t('mcp.market.add.no_tools', { mcp_name: result.server.name }), {
+        const message = result.toolDiscoveryError
+          ? t('mcp.market.add.discovery_failed', {
+              mcp_name: result.server.name,
+              error: result.toolDiscoveryError
+            })
+          : t('mcp.market.add.no_tools', { mcp_name: result.server.name })
+        toast.show(message, {
           color: 'orange',
-          duration: 4000
+          duration: 7000
         })
       } else if (result.attachedToAssistant) {
         toast.show(

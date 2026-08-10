@@ -1,4 +1,15 @@
 describe('Metro eventsource compatibility routing', () => {
+  it('leaves incremental UTF-8 decoding to Expo instead of installing the legacy decoder', () => {
+    const fs = require('fs')
+    const path = require('path')
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'polyfills.js'), 'utf8')
+    const packageJson = require('../../../package.json')
+
+    expect(source).not.toContain('@stardazed/streams-text-encoding')
+    expect(source).not.toMatch(/global(?:This)?\.TextDecoder\s*=/)
+    expect(packageJson.dependencies).not.toHaveProperty('@stardazed/streams-text-encoding')
+  })
+
   it('stubs eventsource without replacing the SSE parser used by AI providers', () => {
     const { createEventSourceResolver } = require('../../../scripts/metro/createEventSourceResolver')
     const polyfillPath = require.resolve('../eventsource')

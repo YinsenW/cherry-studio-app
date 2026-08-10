@@ -428,6 +428,7 @@
       "market": {
         "add": {
           "assistant_attach_failed": "Added {{mcp_name}}, but it could not be enabled for the current Agent. Select it manually from the tools list.",
+          "discovery_failed": "Added {{mcp_name}}, but tool discovery failed: {{error}}",
           "no_tools": "Added {{mcp_name}}, but no callable tools were discovered yet. Check its connection or authentication in server details.",
           "success": "Added {{mcp_name}}",
           "success_agent": "Added {{mcp_name}} and registered {{count}} tool(s) for the current Agent"

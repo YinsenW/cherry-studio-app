@@ -428,6 +428,7 @@
       "market": {
         "add": {
           "assistant_attach_failed": "已新增 {{mcp_name}}，但無法為目前的 Agent 啟用。請返回工具清單手動選取。",
+          "discovery_failed": "已新增 {{mcp_name}}，但工具探索失敗：{{error}}",
           "no_tools": "已新增 {{mcp_name}}，但暫未發現可呼叫的工具。請在服務詳細資料中檢查連線或驗證。",
           "success": "已添加 {{mcp_name}}",
           "success_agent": "已新增 {{mcp_name}}，並為目前的 Agent 註冊 {{count}} 個工具"

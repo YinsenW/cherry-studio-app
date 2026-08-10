@@ -38,11 +38,96 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+function reactNativeSseResponse(body: unknown): Response {
+  const payload = `event: message\ndata: ${JSON.stringify(body)}\n\n`
+  const bytes = new TextEncoder().encode(payload)
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      // One-byte chunks deliberately split the UTF-8 fixture below inside a
+      // multi-byte code point, matching native fetch's arbitrary chunking.
+      for (const byte of bytes) controller.enqueue(Uint8Array.of(byte))
+      controller.close()
+    }
+  })
+
+  Object.defineProperty(stream, 'pipeThrough', {
+    value: () => {
+      throw new Error('React Native fixture does not support browser pipeThrough decoding')
+    }
+  })
+
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: new Headers({ 'content-type': 'text/event-stream' }),
+    body: stream,
+    text: async () => payload,
+    json: async () => body
+  } as Response
+}
+
 describe('MCP v2 protocol negotiation', () => {
   it('uses the workspace transport source instead of its ignored dist artifact', () => {
     expect(require.resolve('@cherrystudio/react-native-streamable-http')).toMatch(
       /packages\/react-native-streamable-http\/src\/index\.ts$/
     )
+  })
+
+  it('discovers and calls tools from SSE responses without browser stream transforms', async () => {
+    const fetchMock = jest.fn(
+      async (_input: unknown, init?: { body?: unknown; headers?: ConstructorParameters<typeof Headers>[0] }) => {
+        const request = recordRequest(_input, init)
+
+        if (request.body.method === 'notifications/initialized') {
+          return new Response(null, { status: 202 })
+        }
+
+        const result =
+          request.body.method === 'server/discover'
+            ? undefined
+            : request.body.method === 'initialize'
+              ? {
+                  protocolVersion: '2025-11-25',
+                  capabilities: { tools: {} },
+                  serverInfo: { name: '移动端-fixture', version: '1.0.0' }
+                }
+              : request.body.method === 'tools/list'
+                ? {
+                    tools: [
+                      {
+                        name: 'mobile_sse_tool',
+                        description: '跨原生分块发现工具',
+                        inputSchema: { type: 'object', properties: {} }
+                      }
+                    ]
+                  }
+                : { content: [{ type: 'text', text: '移动端调用成功' }] }
+
+        return reactNativeSseResponse(
+          request.body.method === 'server/discover'
+            ? {
+                jsonrpc: '2.0',
+                id: request.body.id,
+                error: { code: -32601, message: 'Method not found' }
+              }
+            : { jsonrpc: '2.0', id: request.body.id, result }
+        )
+      }
+    )
+
+    const transport = new RNStreamableHTTPClientTransport('https://fixture.invalid/mcp', { fetch: fetchMock })
+    const client = new Client({ name: 'test-client', version: '1.0.0' }, { versionNegotiation: { mode: 'auto' } })
+
+    await client.connect(transport)
+    await expect(client.listTools()).resolves.toEqual(
+      expect.objectContaining({ tools: [expect.objectContaining({ name: 'mobile_sse_tool' })] })
+    )
+    await expect(client.callTool({ name: 'mobile_sse_tool', arguments: {} })).resolves.toEqual({
+      content: [{ type: 'text', text: '移动端调用成功' }]
+    })
+
+    await client.close()
   })
 
   it('uses modern 2026-07-28 headers and envelopes for a modern server', async () => {
