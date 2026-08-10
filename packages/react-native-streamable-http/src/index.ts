@@ -1,5 +1,6 @@
 import {
   deserializeMessage,
+  type FetchLike,
   isJSONRPCErrorResponse,
   isJSONRPCResultResponse,
   type JSONRPCMessage,
@@ -8,6 +9,14 @@ import {
   type StreamableHTTPClientTransportOptions
 } from '@modelcontextprotocol/client'
 import { createParser } from 'eventsource-parser'
+
+/** Native Expo fetch accepts a string URL even though the MCP SDK uses URL objects. */
+export type RNStringUrlFetch = (url: string, init?: RequestInit) => Promise<Response>
+
+/** Convert the MCP SDK fetch contract to a native string-URL fetch contract. */
+export function createMcpFetchBridge(fetchFn: RNStringUrlFetch): FetchLike {
+  return (url, init) => fetchFn(typeof url === 'string' ? url : url.toString(), init)
+}
 
 type ReactNativeTransportInternals = {
   _abortController?: AbortController
@@ -28,7 +37,7 @@ type ReactNativeTransportInternals = {
  * import path stable for the mobile app.
  */
 export type RNStreamableHTTPClientTransportOptions = Omit<StreamableHTTPClientTransportOptions, 'fetch'> & {
-  fetch?: typeof fetch
+  fetch?: RNStringUrlFetch
 }
 
 /**
@@ -42,7 +51,11 @@ export type RNStreamableHTTPClientTransportOptions = Omit<StreamableHTTPClientTr
  */
 export class RNStreamableHTTPClientTransport extends StreamableHTTPClientTransport {
   constructor(url: string | URL, options?: RNStreamableHTTPClientTransportOptions) {
-    super(typeof url === 'string' ? new URL(url) : url, options)
+    const { fetch: nativeFetch, ...transportOptions } = options ?? {}
+    super(typeof url === 'string' ? new URL(url) : url, {
+      ...transportOptions,
+      ...(nativeFetch ? { fetch: createMcpFetchBridge(nativeFetch) } : {})
+    })
 
     // The SDK deliberately keeps protocol negotiation, headers, OAuth,
     // pagination and request lifecycle. Only replace its browser-specific SSE

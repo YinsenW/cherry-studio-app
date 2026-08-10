@@ -1,6 +1,9 @@
 import { Client } from '@modelcontextprotocol/client'
 
-import { RNStreamableHTTPClientTransport } from '../packages/react-native-streamable-http/src/index'
+import {
+  RNStreamableHTTPClientTransport,
+  type RNStringUrlFetch
+} from '../packages/react-native-streamable-http/src/index'
 import { PUBLIC_MCP_PRESETS } from '../src/config/mcpPresets'
 
 const CALL_TIMEOUT_MS = 30_000
@@ -40,6 +43,15 @@ const READ_ONLY_PROBES: Record<string, { tool: string; arguments: Record<string,
   }
 }
 
+// Match Expo's native contract: reject non-string URLs. This keeps the live
+// verifier from silently passing in Node while Android fails at the bridge.
+const expoLikeFetch: RNStringUrlFetch = (url, init) => {
+  if (typeof url !== 'string') {
+    throw new Error(`Expected a native string URL, received ${typeof url}`)
+  }
+  return fetch(url, init)
+}
+
 async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined
 
@@ -63,7 +75,10 @@ async function verifyPreset(preset: (typeof PUBLIC_MCP_PRESETS)[number]) {
   )
 
   try {
-    await withTimeout(client.connect(new RNStreamableHTTPClientTransport(preset.baseUrl)), `${preset.name} initialize`)
+    await withTimeout(
+      client.connect(new RNStreamableHTTPClientTransport(preset.baseUrl, { fetch: expoLikeFetch })),
+      `${preset.name} initialize`
+    )
     const listed = await withTimeout(client.listTools(), `${preset.name} tools/list`)
     const probe = READ_ONLY_PROBES[preset.id]
     if (!probe) throw new Error(`Missing read-only verification probe for ${preset.id}`)

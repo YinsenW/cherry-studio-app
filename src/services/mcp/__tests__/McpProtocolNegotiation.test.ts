@@ -24,6 +24,9 @@ function recordRequest(
   input: unknown,
   init?: { body?: unknown; headers?: ConstructorParameters<typeof Headers>[0] }
 ): RecordedRequest {
+  if (typeof input !== 'string') {
+    throw new Error(`[start] Cannot convert '${String(input)}' to a Kotlin type.`)
+  }
   const body = JSON.parse(String(init?.body)) as Record<string, any>
   return {
     body,

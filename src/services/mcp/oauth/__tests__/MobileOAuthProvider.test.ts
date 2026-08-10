@@ -524,6 +524,7 @@ describe('performOAuthFlow', () => {
   it('should complete the official SDK discovery, PKCE, registration, and token exchange flow', async () => {
     const mockFetch = global.fetch as jest.Mock
     mockFetch.mockImplementation(async (input: unknown, init?: { method?: string }) => {
+      expect(typeof input).toBe('string')
       const url = String(input)
       if (url.includes('oauth-protected-resource')) {
         return { ok: false, status: 404, text: async () => '' }

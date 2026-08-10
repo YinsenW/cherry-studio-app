@@ -19,10 +19,10 @@ import type {
   OAuthTokens
 } from '@modelcontextprotocol/client'
 import { auth, extractWWWAuthenticateParams } from '@modelcontextprotocol/client'
-import { fetch as expoFetch } from 'expo/fetch'
 import * as WebBrowser from 'expo-web-browser'
 
 import { loggerService } from '@/services/LoggerService'
+import { mcpExpoFetch } from '@/services/mcp/McpFetch'
 import { storage, uuid } from '@/utils'
 
 const logger = loggerService.withContext('MCP:OAuth')
@@ -501,7 +501,7 @@ export async function performOAuthFlow(serverUrl: string): Promise<boolean> {
   try {
     logger.info(`Starting MCP OAuth flow for: ${serverUrl}`)
     return await runSdkOAuthFlow(provider, serverUrl, {
-      fetchFn: expoFetch as unknown as FetchLike
+      fetchFn: mcpExpoFetch
     })
   } catch (error) {
     if (isOAuthCancellation(error)) {

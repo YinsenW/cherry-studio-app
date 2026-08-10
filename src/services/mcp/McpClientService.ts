@@ -15,7 +15,6 @@
 import { RNStreamableHTTPClientTransport } from '@cherrystudio/react-native-streamable-http'
 import type { Tool } from '@modelcontextprotocol/client'
 import { Client } from '@modelcontextprotocol/client'
-import { fetch as expoFetch } from 'expo/fetch'
 import { InteractionManager } from 'react-native'
 
 import { dismissDialog, presentDialog } from '@/componentsV2/base/Dialog/useDialogManager'
@@ -24,6 +23,7 @@ import { loggerService } from '@/services/LoggerService'
 import type { ConnectivityResult, MCPCallToolResponse, MCPServer, OAuthTriggerResult } from '@/types/mcp'
 import type { MCPTool } from '@/types/tool'
 
+import { mcpExpoNativeFetch } from './McpFetch'
 import { createMobileAuthProvider, performOAuthFlow } from './oauth'
 
 const logger = loggerService.withContext('McpClientService')
@@ -354,9 +354,12 @@ class McpClientService {
    */
   public async checkConnectivity(server: MCPServer): Promise<ConnectivityResult> {
     try {
-      const client = await this.getClient(server)
-      // Try listing tools as a health check
-      await client.listTools()
+      // A connection test must exercise the same discovery path the Agent
+      // uses. Calling the raw SDK client here used to report a different
+      // result from McpService/createMcpTools and left their converted-tool
+      // cache cold. Force a real tools/list request, then populate that cache.
+      this.invalidateToolsCache(server.id)
+      await this.listTools(server)
       return { connected: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -509,7 +512,7 @@ class McpClientService {
 
     // Create transport with custom headers and OAuth support
     const transport = new RNStreamableHTTPClientTransport(baseUrl, {
-      fetch: expoFetch as typeof fetch,
+      fetch: mcpExpoNativeFetch,
       requestInit: server.headers
         ? {
             headers: server.headers
