@@ -50,49 +50,55 @@ export async function createMcpTools(assistant: Assistant): Promise<AgentTool[]>
     const mcpTools = await fetchAssistantMcpTools(assistant)
 
     for (const mcpTool of mcpTools) {
-      const server = await mcpService.getMcpServer(mcpTool.serverId)
-      if (!server) continue
+      try {
+        const server = await mcpService.getMcpServer(mcpTool.serverId)
+        if (!server) continue
 
-      // 只处理 streamableHttp——inMemory 的工具已经在 SystemTool
-      // 里直接注入，SSE 尚未支持
-      if (server.type !== 'streamableHttp') continue
+        // 只处理 streamableHttp——inMemory 的工具已经在 SystemTool
+        // 里直接注入，SSE 尚未支持
+        if (server.type !== 'streamableHttp') continue
 
-      tools.push({
-        name: registerMcpAgentToolName({
-          serverId: server.id,
-          serverName: server.name,
-          toolName: mcpTool.name
-        }),
-        label: `${server.name} · ${mcpTool.name}`,
-        description: mcpTool.description ?? mcpTool.name,
-        parameters: (mcpTool.inputSchema ?? { type: 'object', properties: {} }) as AgentTool['parameters'],
-        execute: async (callId, args, signal, _onUpdate) => {
-          const resp = await mcpClientService.callTool(server, mcpTool.name, args as Record<string, unknown>, signal)
-          const text = Array.isArray(resp.content)
-            ? resp.content.map(c => ('text' in c ? String(c.text) : JSON.stringify(c))).join('\n')
-            : JSON.stringify(resp)
-          if (resp.isError) {
-            throw new Error(text || 'MCP tool execution failed.')
-          }
-          const content = contentToAgentBlocks(resp.content ?? [])
-          return {
-            content:
-              content.length > 0
-                ? content
-                : [
-                    {
-                      type: 'text' as const,
-                      text: resp.structuredContent ? JSON.stringify(resp.structuredContent) : 'OK'
-                    }
-                  ],
-            details: {
-              isError: resp.isError,
-              structuredContent: resp.structuredContent,
-              content: resp.content
+        tools.push({
+          name: registerMcpAgentToolName({
+            serverId: server.id,
+            serverName: server.name,
+            toolName: mcpTool.name
+          }),
+          label: `${server.name} · ${mcpTool.name}`,
+          description: mcpTool.description ?? mcpTool.name,
+          parameters: (mcpTool.inputSchema ?? { type: 'object', properties: {} }) as AgentTool['parameters'],
+          execute: async (callId, args, signal, _onUpdate) => {
+            const resp = await mcpClientService.callTool(server, mcpTool.name, args as Record<string, unknown>, signal)
+            const text = Array.isArray(resp.content)
+              ? resp.content.map(c => ('text' in c ? String(c.text) : JSON.stringify(c))).join('\n')
+              : JSON.stringify(resp)
+            if (resp.isError) {
+              throw new Error(text || 'MCP tool execution failed.')
+            }
+            const content = contentToAgentBlocks(resp.content ?? [])
+            return {
+              content:
+                content.length > 0
+                  ? content
+                  : [
+                      {
+                        type: 'text' as const,
+                        text: resp.structuredContent ? JSON.stringify(resp.structuredContent) : 'OK'
+                      }
+                    ],
+              details: {
+                isError: resp.isError,
+                structuredContent: resp.structuredContent,
+                content: resp.content
+              }
             }
           }
-        }
-      })
+        })
+      } catch (error) {
+        // A malformed tool must not prevent every other valid tool from being
+        // registered for the same assistant.
+        logger.warn(`Skipping MCP tool ${mcpTool.name || '<unnamed>'}:`, error as Error)
+      }
     }
   } catch (error) {
     logger.warn('Failed to load MCP tools for agent:', error as Error)

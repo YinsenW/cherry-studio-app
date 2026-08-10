@@ -12,6 +12,7 @@ import { presentMcpServerItemSheet } from '@/componentsV2/features/MCP/McpServer
 import XStack from '@/componentsV2/layout/XStack'
 import { initBuiltinMcp } from '@/config/mcp'
 import { useSearch } from '@/hooks/useSearch'
+import { useCurrentTopic } from '@/hooks/useTopic'
 import type { McpStackParamList } from '@/navigators/McpStackNavigator'
 import type { McpMarketplaceInstallResult } from '@/services/mcp/McpMarketplaceInstallService'
 import type { MCPServer } from '@/types/mcp'
@@ -29,7 +30,8 @@ export function McpMarketScreen() {
   const { t } = useTranslation()
   const navigation = useNavigation<McpNavigationProps>()
   const route = useRoute<RouteProp<McpStackParamList, 'McpMarketScreen'>>()
-  const assistantId = route.params?.assistantId
+  const { currentTopic } = useCurrentTopic()
+  const assistantId = route.params?.assistantId ?? currentTopic?.assistantId
   const [isReady, setIsReady] = useState(false)
   const [activeTab, setActiveTab] = useState<McpMarketTab>('builtin')
   const mcpServers = useMemo(() => initBuiltinMcp(), [])
@@ -50,7 +52,7 @@ export function McpMarketScreen() {
   }, [])
 
   const handleMcpServerItemPress = (mcp: MCPServer) => {
-    presentMcpServerItemSheet(mcp, { mode: 'preview' })
+    presentMcpServerItemSheet(mcp, { mode: 'preview', assistantId })
   }
 
   const handleMarketplaceInstalled = useCallback(

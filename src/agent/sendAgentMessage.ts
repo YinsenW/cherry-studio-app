@@ -97,7 +97,7 @@ async function loadMcpAgentTools(assistant: Assistant): Promise<AgentTool[]> {
     // Keep this module lazy so an optional MCP-runtime initialization failure
     // cannot break the core reply path. A literal require is also resolved
     // deterministically by Metro and Jest in release/test CommonJS bundles.
-    const { createMcpTools } = require('@/aiCore/tools/SystemTools/McpTools') as {
+    const { createMcpTools } = require('../aiCore/tools/SystemTools/McpTools') as {
       createMcpTools: (assistant: Assistant) => Promise<AgentTool[]>
     }
     return await createMcpTools(assistant)
@@ -143,7 +143,7 @@ function validateAgentTools(tools: AgentTool[]): AgentTool[] {
  * explicit function tool-use selection is the user's authoritative signal
  * that the configured model accepts tools.
  */
-function shouldLoadAgentTools(assistant: Assistant): boolean {
+function shouldLoadBuiltInAgentTools(assistant: Assistant): boolean {
   const model = getAssistantModel(assistant)
   return Boolean(model && (assistant.settings?.toolUseMode === 'function' || isFunctionCallingModel(model)))
 }
@@ -153,7 +153,7 @@ async function loadAgentTools(
   topicId?: Topic['id'],
   providedWorkspaceBackend?: WorkspaceBackend | null
 ): Promise<AgentTool[]> {
-  if (!shouldLoadAgentTools(assistant)) {
+  if (!shouldLoadBuiltInAgentTools(assistant)) {
     return []
   }
 
@@ -259,9 +259,14 @@ export async function runAgentSession(
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    const canUseAgentTools = shouldLoadAgentTools(resolvedAssistant)
+    // Built-in tools still respect the model capability gate. A configured
+    // MCP server is different: its tools are an explicit user choice and
+    // must be registered even when a custom model is absent from Cherry's
+    // model-name capability table.
+    const canUseBuiltInAgentTools = shouldLoadBuiltInAgentTools(resolvedAssistant)
+    const hasConfiguredMcp = (resolvedAssistant.mcpServers?.length ?? 0) > 0
     let workspaceBackend: WorkspaceBackend | null = null
-    if (canUseAgentTools) {
+    if (canUseBuiltInAgentTools) {
       try {
         workspaceBackend = await workspaceService.getBackendForTopic(topicId)
       } catch (error) {
@@ -284,7 +289,11 @@ export async function runAgentSession(
         createdAt: 0,
         updatedAt: 0
       } as const)
-    const tools = canUseAgentTools ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend) : []
+    const tools = canUseBuiltInAgentTools
+      ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend)
+      : hasConfiguredMcp
+        ? validateAgentTools(await loadMcpAgentTools(resolvedAssistant))
+        : []
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,

@@ -13,6 +13,7 @@ import YStack from '@/componentsV2/layout/YStack'
 import { useMcpTools } from '@/hooks/useMcp'
 import { useTheme } from '@/hooks/useTheme'
 import { useToast } from '@/hooks/useToast'
+import { assistantService } from '@/services/AssistantService'
 import { loggerService } from '@/services/LoggerService'
 import { mcpService } from '@/services/McpService'
 import type { MCPServer } from '@/types/mcp'
@@ -28,23 +29,28 @@ const SHEET_NAME = 'mcp-server-item-sheet'
 let currentSelectedMcp: MCPServer | null = null
 let currentUpdateMcpServers: ((mcps: MCPServer[]) => Promise<void>) | null = null
 let currentMode: McpServerItemSheetMode = 'manage'
+let currentAssistantId: string | undefined
 let updateSelectedMcpCallback: ((mcp: MCPServer | null) => void) | null = null
 let updateMcpServersCallback: ((fn: ((mcps: MCPServer[]) => Promise<void>) | null) => void) | null = null
 let updateModeCallback: ((mode: McpServerItemSheetMode) => void) | null = null
+let updateAssistantIdCallback: ((assistantId: string | undefined) => void) | null = null
 
 interface PresentOptions {
   mode?: McpServerItemSheetMode
   updateMcpServers?: (mcps: MCPServer[]) => Promise<void>
+  assistantId?: string
 }
 
 export const presentMcpServerItemSheet = (mcp: MCPServer, options: PresentOptions = {}) => {
-  const { mode = 'manage', updateMcpServers } = options
+  const { mode = 'manage', updateMcpServers, assistantId } = options
   currentSelectedMcp = mcp
   currentUpdateMcpServers = updateMcpServers ?? null
   currentMode = mode
+  currentAssistantId = assistantId
   updateSelectedMcpCallback?.(mcp)
   updateMcpServersCallback?.(updateMcpServers ?? null)
   updateModeCallback?.(mode)
+  updateAssistantIdCallback?.(assistantId)
   return TrueSheet.present(SHEET_NAME)
 }
 
@@ -61,6 +67,7 @@ const McpServerItemSheet: React.FC = () => {
     () => currentUpdateMcpServers
   )
   const [mode, setMode] = useState<McpServerItemSheetMode>(currentMode)
+  const [assistantId, setAssistantId] = useState<string | undefined>(currentAssistantId)
   const { tools, isLoading } = useMcpTools(selectedMcp?.id || '', true)
   // Keep a local copy so switch updates reflect immediately
   const [localDisabledTools, setLocalDisabledTools] = useState<string[]>([])
@@ -70,10 +77,12 @@ const McpServerItemSheet: React.FC = () => {
     updateSelectedMcpCallback = setSelectedMcp
     updateMcpServersCallback = fn => setUpdateMcpServers(() => fn)
     updateModeCallback = setMode
+    updateAssistantIdCallback = setAssistantId
     return () => {
       updateSelectedMcpCallback = null
       updateMcpServersCallback = null
       updateModeCallback = null
+      updateAssistantIdCallback = null
     }
   }, [])
 
@@ -125,10 +134,22 @@ const McpServerItemSheet: React.FC = () => {
     if (!selectedMcp || isAdding) return
     try {
       setIsAdding(true)
-      await mcpService.createMcpServer({
+      const installedServer = await mcpService.createMcpServer({
         ...selectedMcp,
         isActive: true
       })
+
+      if (assistantId) {
+        const assistant = await assistantService.getAssistant(assistantId)
+        if (assistant) {
+          const mcpServers = [
+            ...(assistant.mcpServers ?? []).filter(server => server.id !== installedServer.id),
+            installedServer
+          ]
+          await assistantService.updateAssistant(assistant.id, { mcpServers })
+        }
+      }
+
       toast.show(t('mcp.market.add.success', { mcp_name: selectedMcp.name }))
       dismissMcpServerItemSheet()
     } catch (error) {

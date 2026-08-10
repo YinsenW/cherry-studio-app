@@ -65,4 +65,26 @@ describe('createMcpTools', () => {
 
     await expect(tool.execute('call-1', {}, new AbortController().signal, jest.fn())).rejects.toThrow('remote failure')
   })
+
+  it('keeps valid tools when another discovered tool is malformed', async () => {
+    mockFetchAssistantMcpTools.mockResolvedValueOnce([
+      {
+        id: 'tool-bad',
+        serverId: 'server:remote',
+        name: undefined,
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        id: 'tool-good',
+        serverId: 'server:remote',
+        name: 'search.web/v2',
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ])
+
+    const tools = await createMcpTools(assistant)
+
+    expect(tools).toHaveLength(1)
+    expect(tools[0].name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+  })
 })

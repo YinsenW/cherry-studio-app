@@ -390,6 +390,36 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
   })
 
+  it('registers MCP tools for an unrecognised custom model without requiring toolUseMode', async () => {
+    const { message, blocks } = makeUserMessage()
+    const assistantWithMcp: Assistant = {
+      ...assistant,
+      // This intentionally has no settings.toolUseMode. The mocked model is
+      // also absent from the built-in function-calling capability table.
+      mcpServers: [{ id: 'mcp-1' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    mockCreateMcpTools.mockResolvedValueOnce([
+      {
+        name: 'mcp_exa_web_search',
+        label: 'Exa · web_search_exa',
+        description: 'Search the web',
+        parameters: { type: 'object', properties: {} },
+        execute: jest.fn()
+      }
+    ])
+
+    await sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
+
+    expect(mockCreateMcpTools).toHaveBeenCalledWith(
+      expect.objectContaining({ mcpServers: assistantWithMcp.mcpServers })
+    )
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ name: 'mcp_exa_web_search' })])
+    )
+  })
+
   it('surfaces a simulated provider failure as an error block instead of leaving the conversation loading', async () => {
     mockAgentScenario = 'error'
     const { message, blocks } = makeUserMessage()
