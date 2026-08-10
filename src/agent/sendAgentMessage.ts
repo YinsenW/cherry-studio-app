@@ -5,7 +5,7 @@ import type { Tool } from 'ai'
 import { getActualProvider } from '@/aiCore/provider/providerConfig'
 import { isFunctionCallingModel } from '@/config/models'
 import { fetchTopicNaming } from '@/services/ApiService'
-import { getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
+import { assistantService, getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
 import { ConversationService } from '@/services/ConversationService'
 import { loggerService } from '@/services/LoggerService'
 import {
@@ -80,6 +80,22 @@ function resolveAgentAssistant(assistant: Assistant): Assistant {
   return {
     ...assistant,
     model
+  }
+}
+
+/**
+ * Navigation and React rendering can briefly retain the Assistant snapshot
+ * from before a marketplace install completed. Re-read the service cache at
+ * session start so a just-attached MCP server is never lost because the send
+ * button still holds an older object.
+ */
+async function resolveLatestAgentAssistant(assistant: Assistant): Promise<Assistant> {
+  try {
+    const latestAssistant = await assistantService.getAssistant(assistant.id)
+    return resolveAgentAssistant(latestAssistant ?? assistant)
+  } catch (error) {
+    logger.warn(`Unable to refresh assistant ${assistant.id}; using the supplied snapshot:`, error as Error)
+    return resolveAgentAssistant(assistant)
   }
 }
 
@@ -216,7 +232,7 @@ export async function runAgentSession(
   let unsubscribeAgentEvents: (() => void) | null = null
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   let abortAgent: (() => void) | null = null
-  const resolvedAssistant = resolveAgentAssistant(assistant)
+  const resolvedAssistant = await resolveLatestAgentAssistant(assistant)
   // Keep "allow this session" scoped to one agent run. A global singleton
   // would accidentally carry a previous approval into a later conversation.
   const approvalCoordinator = new ToolApprovalCoordinator()

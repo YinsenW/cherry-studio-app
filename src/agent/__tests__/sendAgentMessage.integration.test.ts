@@ -13,6 +13,7 @@ const mockUpdateTopic = jest.fn()
 const mockFetchTopicNaming = jest.fn()
 const mockMessagesToPiContext = jest.fn(async (_messages: Message[], _model: Model) => [])
 const mockCreateMcpTools = jest.fn(async (_assistant: Assistant): Promise<unknown[]> => [])
+const mockGetLatestAssistant = jest.fn(async (_assistantId: string): Promise<Assistant | null> => null)
 let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -230,6 +231,9 @@ jest.mock('@/services/ApiService', () => ({
   fetchTopicNaming: (...args: Parameters<typeof mockFetchTopicNaming>) => mockFetchTopicNaming(...args)
 }))
 jest.mock('@/services/AssistantService', () => ({
+  assistantService: {
+    getAssistant: (assistantId: string) => mockGetLatestAssistant(assistantId)
+  },
   getAssistantModel: (assistant: Pick<Assistant, 'model' | 'defaultModel'>) =>
     assistant.model ?? assistant.defaultModel,
   getAssistantSettings: (assistant: Assistant) => ({ contextCount: 20, ...assistant.settings })
@@ -310,6 +314,7 @@ describe('sendAgentMessage simulated main flow', () => {
     mockAgentScenario = 'success'
     abortMap.clear()
     jest.clearAllMocks()
+    mockGetLatestAssistant.mockResolvedValue(null)
     mockUpdateTopic.mockResolvedValue(undefined)
     mockFetchTopicNaming.mockResolvedValue(undefined)
   })
@@ -417,6 +422,36 @@ describe('sendAgentMessage simulated main flow', () => {
       model,
       expect.any(Object),
       expect.arrayContaining([expect.objectContaining({ name: 'mcp_exa_web_search' })])
+    )
+  })
+
+  it('uses the latest Assistant MCP binding when the UI sends a stale snapshot', async () => {
+    const { message, blocks } = makeUserMessage()
+    const latestAssistant: Assistant = {
+      ...assistant,
+      mcpServers: [{ id: 'mcp-newly-installed' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    mockGetLatestAssistant.mockResolvedValueOnce(latestAssistant)
+    mockCreateMcpTools.mockResolvedValueOnce([
+      {
+        name: 'mcp_latest_search',
+        label: 'Latest Search',
+        description: 'Search from the newly installed MCP',
+        parameters: { type: 'object', properties: {} },
+        execute: jest.fn()
+      }
+    ])
+
+    // `assistant` deliberately has no mcpServers, matching the stale object
+    // retained by a chat screen immediately after returning from the market.
+    await sendAgentMessage(message, blocks, assistant, message.topicId)
+
+    expect(mockGetLatestAssistant).toHaveBeenCalledWith(assistant.id)
+    expect(mockCreateMcpTools).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: latestAssistant.mcpServers }))
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ name: 'mcp_latest_search' })])
     )
   })
 
