@@ -3,6 +3,12 @@ import { File } from 'expo-file-system'
 import type { FileMetadata } from '@/types/file'
 import { FileTypes } from '@/types/file'
 
+import {
+  type AgentAttachment,
+  buildMountedAttachments,
+  type PublicAgentAttachment,
+  publicAgentAttachment
+} from '../attachments/AttachmentManifest'
 import { normalizeWorkspacePath } from './pathPolicy'
 import type {
   FileMutationResult,
@@ -20,6 +26,7 @@ const MAX_READ_BYTES = 50 * 1024
 const MAX_READ_LINES = 2_000
 const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
 const MAX_SEARCH_RESULTS = 100
+const FILE_CHUNK_BYTES = 64 * 1024
 const TEXT_EXTENSIONS = new Set([
   '.txt',
   '.md',
@@ -49,11 +56,13 @@ const TEXT_EXTENSIONS = new Set([
 export type AgentInputGroup = {
   path: string
   files: FileMetadata[]
+  messageId?: string
 }
 
 type MountedInput = {
   metadata: FileMetadata
   logicalPath: string
+  attachment: AgentAttachment
 }
 
 function byteLength(value: string): number {
@@ -69,31 +78,12 @@ function extensionOf(name: string): string {
   return index > 0 ? name.slice(index).toLocaleLowerCase() : ''
 }
 
-function safePathSegment(value: string, fallback: string): string {
-  const basename = value.split(/[\\/]/).pop()?.normalize('NFC') ?? ''
-  const withoutControlCharacters = [...basename]
-    .filter(character => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f)
-    .join('')
-  const sanitized = withoutControlCharacters
-    .replace(/[<>:"|?*]/g, '_')
-    .trim()
-    .slice(0, 160)
-  return sanitized && sanitized !== '.' && sanitized !== '..' ? sanitized : fallback
-}
-
-function uniqueFileName(name: string, used: Set<string>): string {
-  if (!used.has(name)) {
-    used.add(name)
-    return name
-  }
-
-  const extension = extensionOf(name)
-  const stem = extension ? name.slice(0, -extension.length) : name
-  let index = 2
-  while (used.has(`${stem}-${index}${extension}`)) index++
-  const unique = `${stem}-${index}${extension}`
-  used.add(unique)
-  return unique
+function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = new TextEncoder().encode(value)
+  if (bytes.byteLength <= maxBytes) return value
+  let truncated = new TextDecoder().decode(bytes.slice(0, Math.max(0, maxBytes)))
+  while (byteLength(truncated) > maxBytes) truncated = truncated.slice(0, -1)
+  return truncated
 }
 
 /**
@@ -127,17 +117,22 @@ export class AgentInputBackend implements WorkspaceBackend {
       const groupPath = normalizeWorkspacePath(group.path)
       if (groupPath === '.') continue
       this.addDirectoryTree(groupPath)
-      const usedNames = new Set<string>()
-      group.files.forEach((metadata, index) => {
-        const requestedName = metadata.origin_name || metadata.name
-        const safeName = uniqueFileName(
-          safePathSegment(requestedName, `attachment-${index + 1}${metadata.ext || ''}`),
-          usedNames
-        )
-        const logicalPath = `${groupPath}/${safeName}`
-        this.files.set(logicalPath, { metadata, logicalPath })
+      buildMountedAttachments(groupPath, group.files, group.messageId).forEach(attachment => {
+        this.files.set(attachment.logicalPath, {
+          metadata: attachment.metadata,
+          logicalPath: attachment.logicalPath,
+          attachment
+        })
       })
     }
+  }
+
+  getAttachments(): PublicAgentAttachment[] {
+    return [...this.files.values()].map(mounted => publicAgentAttachment(mounted.attachment))
+  }
+
+  getAttachment(path: string): PublicAgentAttachment {
+    return publicAgentAttachment(this.requireMountedFile(path).attachment)
   }
 
   async ensureReady(): Promise<void> {
@@ -153,30 +148,106 @@ export class AgentInputBackend implements WorkspaceBackend {
       throw new Error(`Binary attachment cannot be read as UTF-8 text: ${mounted.logicalPath}`)
     }
 
-    const raw = normalizeText(await file.text())
-    const lines = raw.split('\n')
     const startLine = Math.max(1, Math.floor(offset || 1))
     const boundedLimit = Math.max(1, Math.min(MAX_READ_LINES, Math.floor(limit || MAX_READ_LINES)))
-    const selected = lines.slice(startLine - 1, startLine - 1 + boundedLimit)
-    let content = selected.join('\n')
-    const selectedBytes = byteLength(content)
-    if (selectedBytes > MAX_READ_BYTES) {
-      content = new TextDecoder().decode(new TextEncoder().encode(content).slice(0, MAX_READ_BYTES))
+    const selected: string[] = []
+    let currentSelectedLine = ''
+    let storedBytes = 0
+    let currentLine = 1
+    let truncatedByBytes = false
+    let pendingCarriageReturn = false
+
+    const appendSelectedText = (value: string) => {
+      if (truncatedByBytes || currentLine < startLine || currentLine >= startLine + boundedLimit || !value) {
+        return
+      }
+      const separatorBytes = selected.length > 0 && currentSelectedLine.length === 0 ? 1 : 0
+      const remaining = MAX_READ_BYTES - storedBytes - separatorBytes
+      if (remaining <= 0) {
+        truncatedByBytes = true
+        return
+      }
+      const appended = truncateUtf8(value, remaining)
+      currentSelectedLine += appended
+      storedBytes += byteLength(appended) + separatorBytes
+      if (appended.length < value.length) truncatedByBytes = true
     }
-    const endLine = Math.min(lines.length, startLine - 1 + selected.length)
+
+    const finishLine = () => {
+      if (currentLine >= startLine && currentLine < startLine + boundedLimit && !truncatedByBytes) {
+        selected.push(currentSelectedLine)
+        currentSelectedLine = ''
+      } else if (currentLine >= startLine && currentLine < startLine + boundedLimit && currentSelectedLine) {
+        selected.push(currentSelectedLine)
+        currentSelectedLine = ''
+      }
+      currentLine++
+    }
+
+    const consume = (decoded: string, final = false) => {
+      let text = decoded
+      if (pendingCarriageReturn) {
+        if (text.startsWith('\n')) text = text.slice(1)
+        finishLine()
+        pendingCarriageReturn = false
+      }
+      if (!final && text.endsWith('\r')) {
+        pendingCarriageReturn = true
+        text = text.slice(0, -1)
+      }
+
+      let cursor = 0
+      for (let index = 0; index < text.length; index++) {
+        const character = text[index]
+        if (character !== '\n' && character !== '\r') continue
+        appendSelectedText(text.slice(cursor, index))
+        if (character === '\r' && text[index + 1] === '\n') index++
+        finishLine()
+        cursor = index + 1
+      }
+      appendSelectedText(text.slice(cursor))
+      if (final && pendingCarriageReturn) {
+        finishLine()
+        pendingCarriageReturn = false
+      }
+    }
+
+    const decoder = new TextDecoder('utf-8')
+    const handle = file.open()
+    try {
+      while ((handle.offset ?? 0) < (handle.size ?? file.size)) {
+        const remaining = (handle.size ?? file.size) - (handle.offset ?? 0)
+        const bytes = handle.readBytes(Math.min(FILE_CHUNK_BYTES, remaining))
+        if (bytes.byteLength === 0) break
+        consume(decoder.decode(bytes, { stream: true }))
+      }
+      consume(decoder.decode(), true)
+    } finally {
+      handle.close()
+    }
+
+    if (currentLine >= startLine && currentLine < startLine + boundedLimit) {
+      selected.push(currentSelectedLine)
+    }
+    const totalLines = currentLine
+    const joinedContent = selected.join('\n')
+    const content = truncateUtf8(joinedContent, MAX_READ_BYTES)
+    if (content.length < joinedContent.length) truncatedByBytes = true
+    const endLine =
+      selected.length > 0 ? Math.min(totalLines, startLine + selected.length - 1) : Math.min(totalLines, startLine)
 
     return {
       path: mounted.logicalPath,
       content,
       revision: {
-        value: file.md5 ?? `${file.size}:${file.modificationTime ?? 0}`,
+        value: `${file.size}:${file.modificationTime ?? 0}`,
         size: file.size,
         modificationTime: file.modificationTime
       },
       startLine,
       endLine,
-      totalLines: lines.length,
-      truncated: endLine < lines.length || selectedBytes > MAX_READ_BYTES,
+      totalLines,
+      truncated: endLine < totalLines || truncatedByBytes,
       size: file.size
     }
   }

@@ -1,4 +1,5 @@
 import { agentRunDatabase, agentWorkspaceDatabase, fileDatabase } from '@database'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Directory, File, Paths } from 'expo-file-system'
 
 import { loggerService } from '@/services/LoggerService'
@@ -7,6 +8,11 @@ import type { Message } from '@/types/message'
 import { uuid } from '@/utils'
 import { findFileBlocks, findImageBlocks } from '@/utils/messageUtils/find'
 
+import { AgentDocumentService } from '../attachments/anydoc/AgentDocumentService'
+import { createDocumentTools } from '../attachments/anydoc/documentTools'
+import { attachmentHistoryGroupPath } from '../attachments/AttachmentManifest'
+import { AgentTableService } from '../attachments/table/AgentTableService'
+import { createTableTools } from '../attachments/table/tableTools'
 import { AgentArtifactPublisher } from './AgentArtifactPublisher'
 import { AgentInputBackend } from './AgentInputBackend'
 import { AgentRuntimeBackend } from './AgentRuntimeBackend'
@@ -50,6 +56,9 @@ export type AgentTopicCleanup = {
 
 export class AgentRuntimeSession {
   readonly publisher: AgentArtifactPublisher
+  readonly attachmentTools: AgentTool[]
+  private readonly tableService: AgentTableService
+  private readonly documentService: AgentDocumentService
   private finished = false
 
   constructor(
@@ -60,6 +69,12 @@ export class AgentRuntimeSession {
     assistantMessageId: string
   ) {
     this.publisher = new AgentArtifactPublisher(runId, assistantMessageId, backend)
+    this.tableService = new AgentTableService(runId, backend)
+    this.documentService = new AgentDocumentService(backend)
+    this.attachmentTools = [
+      ...createTableTools(this.tableService, { topicId }),
+      ...createDocumentTools(this.documentService, { topicId })
+    ]
   }
 
   publishFile(input: { path: string; displayName?: string; mimeType?: string }) {
@@ -76,6 +91,9 @@ export class AgentRuntimeSession {
     const now = Date.now()
     const byteUsage = directorySize(this.runRoot)
     const cleanupAfter = status === 'success' ? now : now + FAILED_RUN_RETENTION_MS
+
+    await this.tableService.dispose()
+    this.documentService.dispose()
 
     try {
       await agentRunDatabase.updateRun(this.runId, {
@@ -133,11 +151,13 @@ export class AgentRuntimeService {
     const topicRoot = new Directory(Paths.document, 'AgentRuntime', 'topics', topicKey)
 
     const currentFiles = await collectMessageFiles(input.userMessage)
-    const inputGroups = [{ path: 'current', files: currentFiles }]
+    const inputGroups = [{ path: 'current', files: currentFiles, messageId: input.userMessage.id }]
     for (const message of input.historyMessages ?? []) {
       if (message.id === input.userMessage.id) continue
       const files = await collectMessageFiles(message)
-      if (files.length > 0) inputGroups.push({ path: `history/${storageSegment(message.id)}`, files })
+      if (files.length > 0) {
+        inputGroups.push({ path: attachmentHistoryGroupPath(message.id), files, messageId: message.id })
+      }
     }
 
     const descriptor = (id: string, name: string, rootUri: string): WorkspaceDescriptor => ({

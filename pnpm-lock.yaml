@@ -103,6 +103,9 @@ importers:
       '@expo/ui':
         specifier: ~0.2.0-beta.7
         version: 0.2.0-beta.9(expo@54.0.30(@babel/core@7.28.5)(react-native-webview@13.15.0(react-native@0.81.4(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0))(react-native@0.81.4(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0))(react-native@0.81.4(@babel/core@7.28.5)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      '@firecrawl/anydoc-wasm':
+        specifier: 0.1.7
+        version: 0.1.7
       '@google/genai':
         specifier: ^1.17.0
         version: 1.34.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))
@@ -1984,6 +1987,9 @@ packages:
   '@expo/xcpretty@4.3.2':
     resolution: {integrity: sha512-ReZxZ8pdnoI3tP/dNnJdnmAk7uLT4FjsKDGW7YeDdvdOMz2XCQSmSCM9IWlrXuWtMF9zeSB6WJtEhCQ41gQOfw==}
     hasBin: true
+
+  '@firecrawl/anydoc-wasm@0.1.7':
+    resolution: {integrity: sha512-FkuHl7K8Cl/kyt1ZS9DbX/0GubvW7dHPgiDWrmMoFDFI3GGAtyWsyvAnoqncbFA6yW/ZCjSiZ8jjhH0zeeBxfQ==}
 
   '@floating-ui/core@1.7.3':
     resolution: {integrity: sha512-sGnvb5dmrJaKEZ+LDIpguvdX3bDlEllmv4/ClQ9awcmCZrlx5jQyyMWFM5kBI+EyNOCDDiKk8il0zeuX3Zlg/w==}
@@ -11015,6 +11021,8 @@ snapshots:
       chalk: 4.1.2
       find-up: 5.0.0
       js-yaml: 4.1.1
+
+  '@firecrawl/anydoc-wasm@0.1.7': {}
 
   '@floating-ui/core@1.7.3':
     dependencies:

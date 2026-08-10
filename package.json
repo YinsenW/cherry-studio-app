@@ -9,7 +9,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "build:mcp-transport": "node ./node_modules/typescript/bin/tsc -p ./packages/react-native-streamable-http/tsconfig.json",
-    "test:ci": "pnpm build:mcp-transport && jest --ci --coverage --maxWorkers=2 --passWithNoTests",
+    "build:anydoc-runtime": "node ./scripts/build-anydoc-web-runtime.mjs",
+    "test:anydoc-runtime": "node ./scripts/test-anydoc-web-runtime.mjs",
+    "test:ci": "pnpm build:mcp-transport && pnpm test:anydoc-runtime && jest --ci --coverage --maxWorkers=2 --passWithNoTests",
     "test": "pnpm build:mcp-transport && jest --watchAll --coverage --passWithNoTests",
     "verify:mcp-presets": "tsx scripts/verify-public-mcp-presets.ts",
     "check:i18n": "tsx scripts/check-i18n.ts",
@@ -22,10 +24,10 @@
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm check:i18n && pnpm lint:check && pnpm format:check",
     "eas-build-pre-install": "corepack enable && corepack prepare pnpm@10.26.2 --activate",
-    "eas-build-post-install": "pnpm build:mcp-transport",
+    "eas-build-post-install": "pnpm build:mcp-transport && pnpm build:anydoc-runtime",
     "analyze:ios": "source-map-explorer 'dist/_expo/static/js/ios/*.js' 'dist/_expo/static/js/ios/*.js.map'",
     "analyze:android": "source-map-explorer 'dist/_expo/static/js/android/*.js' 'dist/_expo/static/js/android/*.js.map'",
-    "postinstall": "pnpm build:mcp-transport"
+    "postinstall": "pnpm build:mcp-transport && pnpm build:anydoc-runtime"
   },
   "jest": {
     "preset": "jest-expo",
@@ -74,6 +76,7 @@
     "@earendil-works/pi-ai": "^0.84.0",
     "@earendil-works/pi-agent-core": "^0.84.0",
     "@expo/ui": "~0.2.0-beta.7",
+    "@firecrawl/anydoc-wasm": "0.1.7",
     "@google/genai": "^1.17.0",
     "@gorhom/bottom-sheet": "^5.2.8",
     "@legendapp/list": "^2.0.19",

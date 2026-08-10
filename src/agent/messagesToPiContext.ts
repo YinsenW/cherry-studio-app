@@ -7,17 +7,36 @@ import type {
 } from '@earendil-works/pi-ai'
 import { File } from 'expo-file-system'
 
-import { convertFileBlockToTextPart } from '@/aiCore/prepareParams/fileProcessor'
 import { isVisionModel } from '@/config/models'
 import { loggerService } from '@/services/LoggerService'
 import type { Model } from '@/types/assistant'
 import type { Message, ToolMessageBlock } from '@/types/message'
 import { AssistantMessageStatus, MessageBlockType } from '@/types/message'
-import { findAllBlocks, findFileBlocks, findImageBlocks, getMainTextContent } from '@/utils/messageUtils/find'
+import { findAllBlocks, findImageBlocks, getFileContent, getMainTextContent } from '@/utils/messageUtils/find'
+
+import {
+  attachmentHistoryGroupPath,
+  buildAttachmentManifest,
+  buildMountedAttachments
+} from './attachments/AttachmentManifest'
+import { MAX_AGENT_TOOL_HISTORY_BYTES, truncateAgentText } from './context/AgentContextBudget'
 
 const logger = loggerService.withContext('messagesToPiContext')
+const MAX_AGENT_IMAGES = 10
+const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024
 
-export async function messageToPiUserMessage(message: Message, model: Model): Promise<UserMessage> {
+export type AgentMessageConversionOptions = {
+  attachmentGroupPath?: string
+  attachmentScope?: 'current' | 'history'
+  attachmentToolsAvailable?: boolean
+  includeImages?: boolean
+}
+
+export async function messageToPiUserMessage(
+  message: Message,
+  model: Model,
+  options: AgentMessageConversionOptions = {}
+): Promise<UserMessage> {
   const textParts: string[] = []
   const content: (TextContent | ImageContent)[] = []
   const mainText = await getMainTextContent(message)
@@ -25,15 +44,15 @@ export async function messageToPiUserMessage(message: Message, model: Model): Pr
     textParts.push(mainText)
   }
 
-  for (const fileBlock of await findFileBlocks(message)) {
-    const textPart = await convertFileBlockToTextPart(fileBlock)
-    if (textPart?.text.trim()) {
-      textParts.push(textPart.text)
-    } else {
-      textParts.push(
-        `[Attached file: ${fileBlock.file.origin_name}. Its contents could not be extracted on this device.]`
-      )
-    }
+  const files = [...new Map((await getFileContent(message)).map(file => [file.id, file])).values()]
+  if (files.length > 0) {
+    const attachments = buildMountedAttachments(options.attachmentGroupPath ?? 'current', files, message.id)
+    textParts.push(
+      buildAttachmentManifest(attachments, {
+        scope: options.attachmentScope ?? 'current',
+        toolsAvailable: options.attachmentToolsAvailable ?? true
+      })
+    )
   }
 
   if (textParts.length > 0) {
@@ -41,33 +60,67 @@ export async function messageToPiUserMessage(message: Message, model: Model): Pr
   }
 
   const imageBlocks = await findImageBlocks(message)
-  if (imageBlocks.length > 0 && !isVisionModel(model)) {
+  const includeImages = options.includeImages ?? true
+  if (imageBlocks.length > 0 && !includeImages) {
+    const unmountedImages = imageBlocks.filter(block => !block.file).length
+    if (unmountedImages > 0) {
+      content.push({
+        type: 'text',
+        text: `[${unmountedImages} historical image(s) without a local file were omitted from this Agent turn.]`
+      })
+    }
+  } else if (imageBlocks.length > 0 && !isVisionModel(model)) {
     content.push({
       type: 'text',
       text: `[${imageBlocks.length} attached image(s) were not included because the selected model does not support image input.]`
     })
   } else {
+    let includedImages = 0
+    let includedImageBytes = 0
+    let omittedImages = 0
     for (const imageBlock of imageBlocks) {
       try {
         if (imageBlock.file) {
           const image = new File(imageBlock.file.path)
+          if (includedImages >= MAX_AGENT_IMAGES || includedImageBytes + image.size > MAX_AGENT_IMAGE_BYTES) {
+            omittedImages++
+            continue
+          }
           content.push({
             type: 'image',
             data: await image.base64(),
             mimeType: image.type || 'image/jpeg'
           })
+          includedImages++
+          includedImageBytes += image.size
         } else if (imageBlock.url) {
           const dataUrlMatch = /^data:([^;]+);base64,(.+)$/.exec(imageBlock.url)
+          const estimatedBytes = dataUrlMatch ? Math.ceil((dataUrlMatch[2].length * 3) / 4) : 0
+          if (
+            includedImages >= MAX_AGENT_IMAGES ||
+            (estimatedBytes > 0 && includedImageBytes + estimatedBytes > MAX_AGENT_IMAGE_BYTES)
+          ) {
+            omittedImages++
+            continue
+          }
           content.push({
             type: 'image',
             data: dataUrlMatch?.[2] ?? imageBlock.url,
             mimeType: dataUrlMatch?.[1] ?? 'image/jpeg'
           })
+          includedImages++
+          includedImageBytes += estimatedBytes
         }
       } catch (error) {
         logger.warn('Failed to load an image for the agent prompt:', error as Error)
         content.push({ type: 'text', text: '[An attached image could not be read on this device.]' })
       }
+    }
+    if (omittedImages > 0) {
+      content.push({
+        type: 'text',
+        text: `[${omittedImages} image(s) were omitted because Agent image input is limited to ${MAX_AGENT_IMAGES} images and 20 MiB per turn.]`
+      })
     }
   }
 
@@ -81,10 +134,9 @@ export async function messageToPiUserMessage(message: Message, model: Model): Pr
 /**
  * 把当前 topic 的历史消息转换为 pi-agent 的上下文消息。
  *
- * 首版简化：
- * - 用户消息 → 主文本
+ * - 用户消息 → 主文本 + 有界附件 manifest
  * - assistant 消息（成功/暂停）→ 主文本 + 工具调用摘要（"[tool name(args) → result]"）
- * - 图片/文件/引用等块降级为跳过（不进入 agent 上下文）
+ * - 历史图片不重复编码；历史附件只保留只读挂载路径
  * - 工具历史以文本摘要形式注入，让 agent 知道之前执行过什么
  */
 async function getToolSummary(message: Message): Promise<string[]> {
@@ -101,20 +153,34 @@ async function getToolSummary(message: Message): Promise<string[]> {
           ? JSON.stringify(toolBlock.content)
           : ''
     if (toolBlock.toolName) {
-      parts.push(`[tool ${toolBlock.toolName}${args}${content ? ` → ${content}` : ''}]`)
+      parts.push(
+        truncateAgentText(
+          `[tool ${toolBlock.toolName}${args}${content ? ` → ${content}` : ''}]`,
+          MAX_AGENT_TOOL_HISTORY_BYTES
+        )
+      )
     }
   }
   return parts
 }
 
-export async function messagesToPiContext(messages: Message[], model: Model): Promise<PiMessage[]> {
+export async function messagesToPiContext(
+  messages: Message[],
+  model: Model,
+  options: Pick<AgentMessageConversionOptions, 'attachmentToolsAvailable'> = {}
+): Promise<PiMessage[]> {
   const pi: PiMessage[] = []
 
   for (const msg of messages) {
     if (!msg.blocks?.length) continue
 
     if (msg.role === 'user') {
-      const userMessage = await messageToPiUserMessage(msg, model)
+      const userMessage = await messageToPiUserMessage(msg, model, {
+        attachmentGroupPath: attachmentHistoryGroupPath(msg.id),
+        attachmentScope: 'history',
+        attachmentToolsAvailable: options.attachmentToolsAvailable,
+        includeImages: false
+      })
       if (userMessage.content.length > 0) {
         pi.push(userMessage)
       }

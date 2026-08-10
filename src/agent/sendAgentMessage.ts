@@ -32,6 +32,7 @@ import { findAllBlocks } from '@/utils/messageUtils/find'
 
 import { AgentService } from './AgentService'
 import { createAgentEventToChunk } from './agentToChunk'
+import { assertAgentUserMessageBudget, compactAgentContext } from './context/AgentContextBudget'
 import { messagesToPiContext, messageToPiUserMessage } from './messagesToPiContext'
 import { aiSdkToolToAgentTool } from './toolAdapter'
 import { buildAgentSystemPrompt } from './workspace/agentPrompt'
@@ -225,7 +226,12 @@ async function loadAgentTools(
     }
   }
 
-  return validateAgentTools([...mobileWorkspaceTools, ...builtInTools, ...(await loadMcpAgentTools(assistant))])
+  return validateAgentTools([
+    ...mobileWorkspaceTools,
+    ...(runtimeSession?.attachmentTools ?? []),
+    ...builtInTools,
+    ...(await loadMcpAgentTools(assistant))
+  ])
 }
 
 /**
@@ -285,12 +291,8 @@ export async function runAgentSession(
       allMessages.filter(message => message.id !== assistantMessage.id),
       contextCount
     )
-    const contextMessages = await messagesToPiContext(
-      filteredMessages.filter(message => message.id !== userMessage.id),
-      resolvedAssistant.model!
-    )
-
-    // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
+    // 3. Start the private runtime before serializing attachments. The model
+    // receives only a bounded manifest whose paths must reflect real mounts.
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
     // Built-in tools still respect the model capability gate. A configured
@@ -318,6 +320,18 @@ export async function runAgentSession(
         logger.warn('Agent will continue without private mobile runtime tools:', error as Error)
       }
     }
+    const convertedContextMessages = await messagesToPiContext(
+      filteredMessages.filter(message => message.id !== userMessage.id),
+      resolvedAssistant.model!,
+      { attachmentToolsAvailable: Boolean(workspaceBackend) }
+    )
+    const compactedContext = compactAgentContext(convertedContextMessages)
+    if (compactedContext.dropped > 0) {
+      logger.info(`Dropped ${compactedContext.dropped} historical Agent message(s) to stay within the context budget.`)
+    }
+    const contextMessages = compactedContext.messages
+
+    // 4. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const workspace =
       workspaceBackend?.descriptor ??
       ({
@@ -347,20 +361,26 @@ export async function runAgentSession(
       }
     )
 
-    // 4. 事件 → chunk → 现有块流
+    // 5. 事件 → chunk → 现有块流
     const eventAdapter = createAgentEventToChunk(processChunk)
     unsubscribeAgentEvents = agentService.subscribe(eventAdapter)
 
-    // 5. 中止：绑定到现有「暂停/停止」机制
+    // 6. 中止：绑定到现有「暂停/停止」机制
     abortAgent = () => agentService.abort()
     addAbortController(userMessage.id, abortAgent)
 
-    const userPrompt = await messageToPiUserMessage(userMessage, resolvedAssistant.model!)
+    const userPrompt = await messageToPiUserMessage(userMessage, resolvedAssistant.model!, {
+      attachmentGroupPath: 'current',
+      attachmentScope: 'current',
+      attachmentToolsAvailable: Boolean(workspaceBackend),
+      includeImages: true
+    })
     if (userPrompt.content.length === 0) {
       throw new Error('The message did not contain any text or supported attachment content.')
     }
+    assertAgentUserMessageBudget(userPrompt)
 
-    // 6. 超时兜底：普通聊天路径有 timeout:30000，agent 可能多轮，给 120s。
+    // 7. 超时兜底：普通聊天路径有 timeout:30000，agent 可能多轮，给 120s。
     // 否则网络卡住时 prompt 永不返回 → 一直转圈。
     await Promise.race([
       agentService.prompt(userPrompt),

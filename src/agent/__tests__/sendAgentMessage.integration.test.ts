@@ -41,6 +41,22 @@ const mockRuntimeBackend = {
 }
 const mockRuntimeSession = {
   backend: mockRuntimeBackend,
+  attachmentTools: [
+    {
+      name: 'table_query',
+      label: 'table_query',
+      description: 'Query an attachment table',
+      parameters: { type: 'object', properties: {} },
+      execute: jest.fn()
+    },
+    {
+      name: 'document_inspect',
+      label: 'document_inspect',
+      description: 'Inspect an attachment document',
+      parameters: { type: 'object', properties: {} },
+      execute: jest.fn()
+    }
+  ],
   publishFile: jest.fn(),
   publishPendingOutputs: mockRuntimePublishPendingOutputs,
   finish: mockRuntimeFinish
@@ -429,6 +445,8 @@ describe('sendAgentMessage simulated main flow', () => {
       expect.arrayContaining([
         expect.objectContaining({ name: 'read' }),
         expect.objectContaining({ name: 'bash' }),
+        expect.objectContaining({ name: 'table_query' }),
+        expect.objectContaining({ name: 'document_inspect' }),
         expect.objectContaining({ name: 'publish_file' }),
         expect.objectContaining({ name: 'mcp_exa_web_search' })
       ])

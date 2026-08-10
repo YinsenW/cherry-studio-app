@@ -6,6 +6,7 @@ const path = require('path')
 const config = getDefaultConfig(__dirname)
 
 config.resolver.sourceExts.push('sql')
+if (!config.resolver.assetExts.includes('wasm')) config.resolver.assetExts.push('wasm')
 
 // 添加对 @cherrystudio/ai-core 的支持
 config.resolver.resolverMainFields = ['react-native', 'browser', 'main']

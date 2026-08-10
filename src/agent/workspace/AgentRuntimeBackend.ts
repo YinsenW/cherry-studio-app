@@ -1,5 +1,6 @@
 import type { File } from 'expo-file-system'
 
+import type { PublicAgentAttachment } from '../attachments/AttachmentManifest'
 import type { AgentInputBackend } from './AgentInputBackend'
 import { AppSandboxBackend } from './AppSandboxBackend'
 import { normalizeWorkspacePath } from './pathPolicy'
@@ -336,6 +337,19 @@ export class AgentRuntimeBackend implements WorkspaceBackend {
     return {
       path: this.logicalPath('outputs', routed.path),
       file: await routed.mount.backend.getFileHandle(routed.path)
+    }
+  }
+
+  async getInputAttachment(path: string): Promise<{ attachment: PublicAgentAttachment; file: File }> {
+    const routed = this.route(path, false)
+    if (routed.mountName !== 'inputs') {
+      throw new Error('Attachment analysis tools only accept paths under inputs.')
+    }
+    const inputBackend = routed.mount.backend as AgentInputBackend
+    const attachment = inputBackend.getAttachment(routed.path)
+    return {
+      attachment: { ...attachment, logicalPath: this.logicalPath('inputs', attachment.logicalPath) },
+      file: await inputBackend.getFileHandle(routed.path)
     }
   }
 

@@ -3,19 +3,15 @@ import { FileTypes } from '@/types/file'
 import type { Message, MessageBlock } from '@/types/message'
 import { MessageBlockStatus, MessageBlockType, UserMessageStatus } from '@/types/message'
 
-import { messageToPiUserMessage } from '../messagesToPiContext'
+import { messagesToPiContext, messageToPiUserMessage } from '../messagesToPiContext'
 
 const mockBlocks = new Map<string, MessageBlock>()
-const mockConvertFileBlockToTextPart = jest.fn()
 const mockIsVisionModel = jest.fn()
 
 jest.mock('@database', () => ({
   messageBlockDatabase: {
     getBlockById: async (id: string) => mockBlocks.get(id)
   }
-}))
-jest.mock('@/aiCore/prepareParams/fileProcessor', () => ({
-  convertFileBlockToTextPart: (...args: unknown[]) => mockConvertFileBlockToTextPart(...args)
 }))
 jest.mock('@/config/models', () => ({
   isVisionModel: (...args: unknown[]) => mockIsVisionModel(...args)
@@ -58,7 +54,7 @@ describe('messageToPiUserMessage', () => {
         id: 'file-1',
         name: 'notes.txt',
         origin_name: 'notes.txt',
-        path: '/notes.txt',
+        path: 'file:///private/notes.txt',
         size: 5,
         ext: '.txt',
         type: FileTypes.TEXT,
@@ -76,20 +72,23 @@ describe('messageToPiUserMessage', () => {
       createdAt: 1,
       status: MessageBlockStatus.SUCCESS
     })
-    mockConvertFileBlockToTextPart.mockResolvedValue({ type: 'text', text: 'File contents' })
   })
 
-  it('includes extracted files and images for vision-capable models', async () => {
+  it('uses a bounded attachment manifest instead of inlining file contents', async () => {
     mockIsVisionModel.mockReturnValue(true)
 
-    await expect(messageToPiUserMessage(message, model)).resolves.toEqual({
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Question\n\nFile contents' },
-        { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
-      ],
-      timestamp: 1
-    })
+    const result = await messageToPiUserMessage(message, model)
+
+    expect(result.role).toBe('user')
+    expect(result.timestamp).toBe(1)
+    expect(result.content[0]).toMatchObject({ type: 'text' })
+    const manifestText = (result.content[0] as { type: 'text'; text: string }).text
+    expect(manifestText).toContain('Question')
+    expect(manifestText).toContain('"type": "agent_attachment_manifest"')
+    expect(manifestText).toContain('"path": "inputs/current/notes.txt"')
+    expect(manifestText).toContain('"bytes": 5')
+    expect(manifestText).not.toContain('file:///private')
+    expect(result.content[1]).toEqual({ type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' })
   })
 
   it('makes omitted images visible to the model instead of silently dropping them', async () => {
@@ -98,11 +97,22 @@ describe('messageToPiUserMessage', () => {
     const result = await messageToPiUserMessage(message, model)
 
     expect(result.content).toEqual([
-      { type: 'text', text: 'Question\n\nFile contents' },
+      expect.objectContaining({ type: 'text', text: expect.stringContaining('agent_attachment_manifest') }),
       {
         type: 'text',
         text: '[1 attached image(s) were not included because the selected model does not support image input.]'
       }
     ])
+  })
+
+  it('does not resend historical images and points at the history mount', async () => {
+    mockIsVisionModel.mockReturnValue(true)
+
+    const result = await messagesToPiContext([message], model, { attachmentToolsAvailable: true })
+    const user = result[0]
+
+    expect(user.role).toBe('user')
+    expect(JSON.stringify(user.content)).toContain('inputs/history/user-1/notes.txt')
+    expect(user.content).not.toContainEqual(expect.objectContaining({ type: 'image' }))
   })
 })

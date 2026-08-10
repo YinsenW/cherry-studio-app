@@ -18,6 +18,7 @@ import { Provider } from 'react-redux'
 import { PersistGate } from 'redux-persist/integration/react'
 import { Uniwind } from 'uniwind'
 
+import { AnydocRuntimeHost } from '@/agent/attachments/anydoc/AnydocRuntimeHost'
 import { DialogManager } from '@/componentsV2'
 import SheetManager from '@/componentsV2/features/Sheet/SheetManager'
 import { UpdatePrompt } from '@/componentsV2/features/UpdatePrompt'
@@ -148,6 +149,7 @@ function ThemedApp() {
   return (
     <HeroUINativeProvider>
       <KeyboardProvider>
+        <AnydocRuntimeHost />
         <NavigationContainer theme={isDark ? DarkTheme : DefaultTheme}>
           <SystemBars style={isDark ? 'light' : 'dark'} />
           <DialogProvider>
