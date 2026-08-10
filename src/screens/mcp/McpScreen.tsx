@@ -19,6 +19,7 @@ import { useSearch } from '@/hooks/useSearch'
 import { useSkeletonLoading } from '@/hooks/useSkeletonLoading'
 import { useToast } from '@/hooks/useToast'
 import { useCurrentTopic } from '@/hooks/useTopic'
+import { attachMcpServersToAssistant } from '@/services/mcp/McpAssistantBindingService'
 import { mcpService } from '@/services/McpService'
 import type { MCPServer } from '@/types/mcp'
 import type { DrawerNavigationProps, McpNavigationProps } from '@/types/naviagate'
@@ -63,6 +64,11 @@ export default function McpScreen() {
     if (result.totalFailed > 0) {
       const failedServer = result.failed[0]
       toast.show(t('mcp.server.update_failed', { name: failedServer.item.name }), { color: 'red', duration: 3000 })
+      return
+    }
+
+    if (isActive) {
+      await attachMcpServersToAssistant(currentTopic?.assistantId, [{ ...mcp, isActive }])
     }
   }
 
@@ -77,7 +83,8 @@ export default function McpScreen() {
       installedAt: Date.now()
     }
     try {
-      await mcpService.createMcpServer(newMcp)
+      const created = await mcpService.createMcpServer(newMcp)
+      await attachMcpServersToAssistant(currentTopic?.assistantId, [created])
       navigation.navigate('McpDetailScreen', { mcpId: newMcp.id })
     } catch {
       toast.show(t('mcp.server.add_failed'), { color: 'red', duration: 3000 })
@@ -86,8 +93,9 @@ export default function McpScreen() {
 
   const handleImportMcpJson = () => {
     presentMcpJsonImportSheet(async servers => {
-      await mcpService.createMcpServers(servers)
-      toast.show(t('mcp.server.import.success', { count: servers.length }), { duration: 3000 })
+      const created = await mcpService.createMcpServers(servers)
+      await attachMcpServersToAssistant(currentTopic?.assistantId, created)
+      toast.show(t('mcp.server.import.success', { count: created.length }), { duration: 3000 })
     })
   }
 
