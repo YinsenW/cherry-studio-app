@@ -26,8 +26,10 @@ import YStack from '@/componentsV2/layout/YStack'
 import { useMcpOAuth, useMcpServer, useMcpTools } from '@/hooks/useMcp'
 import { useSearch } from '@/hooks/useSearch'
 import { useToast } from '@/hooks/useToast'
+import { useCurrentTopic } from '@/hooks/useTopic'
 import type { McpStackParamList } from '@/navigators/McpStackNavigator'
 import { loggerService } from '@/services/LoggerService'
+import { attachMcpServersToAssistant } from '@/services/mcp/McpAssistantBindingService'
 import { mcpClientService } from '@/services/mcp/McpClientService'
 import type { ConnectivityResult } from '@/types/mcp'
 
@@ -40,6 +42,7 @@ export default function McpDetailScreen() {
   const navigation = useNavigation()
   const route = useRoute<McpDetailRouteProp>()
   const toast = useToast()
+  const { currentTopic } = useCurrentTopic()
   const { mcpId } = route.params ?? {}
 
   const { mcpServer, isLoading, updateMcpServer, deleteMcpServer } = useMcpServer(mcpId ?? '')
@@ -106,6 +109,9 @@ export default function McpDetailScreen() {
 
     try {
       await updateMcpServer({ isActive: checked })
+      if (checked) {
+        await attachMcpServersToAssistant(currentTopic?.assistantId, [{ ...mcpServer, isActive: true }])
+      }
     } catch (error) {
       logger.error('Failed to update MCP server active state', error as Error)
     }

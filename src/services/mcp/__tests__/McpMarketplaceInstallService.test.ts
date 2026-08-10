@@ -16,6 +16,7 @@ jest.mock('@/services/McpService', () => ({
     createMcpServer: jest.fn(),
     getAllMcpServers: jest.fn(),
     getMcpServer: jest.fn(),
+    getMcpTools: jest.fn(),
     invalidateToolsCache: jest.fn(),
     updateMcpServer: jest.fn()
   }
@@ -74,6 +75,7 @@ describe('McpMarketplaceInstallService', () => {
           return server
         }),
         getMcpServer: jest.fn(async () => storedServer),
+        getMcpTools: jest.fn(async () => []),
         updateMcpServer: jest.fn(async (_id, updates) => {
           if (storedServer) storedServer = { ...storedServer, ...updates }
         }),
@@ -120,6 +122,8 @@ describe('McpMarketplaceInstallService', () => {
       baseUrl: 'https://old.example/mcp',
       headers: { Authorization: 'Bearer expired' },
       disabledTools: ['web_fetch_exa'],
+      isTrusted: true,
+      trustedAt: 123,
       isActive: false
     }
     const service = new McpMarketplaceInstallService(dependencies)
@@ -133,6 +137,8 @@ describe('McpMarketplaceInstallService', () => {
         baseUrl: candidate.baseUrl,
         headers: undefined,
         disabledTools: ['web_fetch_exa'],
+        isTrusted: true,
+        trustedAt: 123,
         isActive: true
       })
     )
@@ -142,6 +148,8 @@ describe('McpMarketplaceInstallService', () => {
           id: 'existing-exa',
           baseUrl: candidate.baseUrl,
           disabledTools: ['web_fetch_exa'],
+          isTrusted: true,
+          trustedAt: 123,
           isActive: true
         })
       ]
@@ -171,5 +179,60 @@ describe('McpMarketplaceInstallService', () => {
       toolDiscoveryFailed: true
     })
     expect(dependencies.assistantService.updateAssistant).toHaveBeenCalled()
+  })
+
+  it('reuses a manually added server with the same normalized endpoint', async () => {
+    storedServer = {
+      ...candidate,
+      id: 'manual-exa',
+      provider: 'Manual',
+      providerUrl: undefined,
+      baseUrl: 'https://mcp.exa.ai/mcp/',
+      isActive: false
+    }
+    const service = new McpMarketplaceInstallService(dependencies)
+
+    const result = await service.install(candidate, { assistantId: assistant.id })
+
+    expect(dependencies.mcpService.createMcpServer).not.toHaveBeenCalled()
+    expect(dependencies.mcpService.updateMcpServer).toHaveBeenCalledWith(
+      'manual-exa',
+      expect.objectContaining({ baseUrl: candidate.baseUrl, isActive: true })
+    )
+    expect(result.server.id).toBe('manual-exa')
+  })
+
+  it('enables, discovers, and attaches an in-memory preset without using the HTTP client', async () => {
+    const builtin: MCPServer = {
+      id: '@cherry/time',
+      name: '@cherry/time',
+      type: 'inMemory',
+      isActive: false
+    }
+    const builtinTools = [
+      {
+        id: 'builtin-time',
+        serverId: builtin.id,
+        serverName: builtin.name,
+        name: 'GetCurrentTime',
+        type: 'mcp',
+        isBuiltIn: true,
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ] as MCPTool[]
+    jest.mocked(dependencies.mcpService.getMcpTools).mockResolvedValueOnce(builtinTools)
+    const service = new McpMarketplaceInstallService(dependencies)
+
+    const result = await service.install(builtin, { assistantId: assistant.id })
+
+    expect(dependencies.mcpService.createMcpServer).toHaveBeenCalledWith({ ...builtin, isActive: true })
+    expect(dependencies.mcpService.getMcpTools).toHaveBeenCalledWith(builtin.id, true)
+    expect(dependencies.mcpClientService.listTools).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      tools: builtinTools,
+      attachedToAssistant: true,
+      toolDiscoveryFailed: false,
+      server: { id: builtin.id, isActive: true }
+    })
   })
 })

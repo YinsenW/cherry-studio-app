@@ -11,7 +11,9 @@ import { McpMarketplaceContent } from '@/componentsV2/features/MCP/McpMarketplac
 import { presentMcpServerItemSheet } from '@/componentsV2/features/MCP/McpServerItemSheet'
 import XStack from '@/componentsV2/layout/XStack'
 import { initBuiltinMcp } from '@/config/mcp'
+import { initPublicMcpPresets } from '@/config/mcpPresets'
 import { useSearch } from '@/hooks/useSearch'
+import { useCurrentTopic } from '@/hooks/useTopic'
 import type { McpStackParamList } from '@/navigators/McpStackNavigator'
 import type { McpMarketplaceInstallResult } from '@/services/mcp/McpMarketplaceInstallService'
 import type { MCPServer } from '@/types/mcp'
@@ -29,17 +31,18 @@ export function McpMarketScreen() {
   const { t } = useTranslation()
   const navigation = useNavigation<McpNavigationProps>()
   const route = useRoute<RouteProp<McpStackParamList, 'McpMarketScreen'>>()
-  const assistantId = route.params?.assistantId
+  const { currentTopic } = useCurrentTopic()
+  const assistantId = route.params?.assistantId ?? currentTopic?.assistantId
   const [isReady, setIsReady] = useState(false)
   const [activeTab, setActiveTab] = useState<McpMarketTab>('builtin')
-  const mcpServers = useMemo(() => initBuiltinMcp(), [])
+  const mcpServers = useMemo(() => [...initBuiltinMcp(), ...initPublicMcpPresets()], [])
   const {
     searchText,
     setSearchText,
     filteredItems: filteredMcps
   } = useSearch(
     mcpServers,
-    useCallback((mcp: MCPServer) => [mcp.name || '', mcp.id || ''], [])
+    useCallback((mcp: MCPServer) => [mcp.name || '', mcp.id || '', mcp.description || '', ...(mcp.tags ?? [])], [])
   )
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export function McpMarketScreen() {
   }, [])
 
   const handleMcpServerItemPress = (mcp: MCPServer) => {
-    presentMcpServerItemSheet(mcp, { mode: 'preview' })
+    presentMcpServerItemSheet(mcp, { mode: 'preview', assistantId })
   }
 
   const handleMarketplaceInstalled = useCallback(
@@ -86,7 +89,12 @@ export function McpMarketScreen() {
         ) : activeTab === 'builtin' ? (
           <>
             <SearchInput placeholder={t('common.search_placeholder')} value={searchText} onChangeText={setSearchText} />
-            <McpMarketContent mcps={filteredMcps} handleMcpServerItemPress={handleMcpServerItemPress} mode="add" />
+            <McpMarketContent
+              mcps={filteredMcps}
+              handleMcpServerItemPress={handleMcpServerItemPress}
+              mode="add"
+              assistantId={assistantId}
+            />
           </>
         ) : (
           <McpMarketplaceContent

@@ -46,6 +46,7 @@ const mockRuntimeSession = {
   finish: mockRuntimeFinish
 }
 const mockRuntimeStartRun = jest.fn(async (..._args: unknown[]) => mockRuntimeSession)
+const mockGetLatestAssistant = jest.fn(async (_assistantId: string): Promise<Assistant | null> => null)
 let mockAgentScenario: 'success' | 'error' | 'missing-terminal' = 'success'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -268,6 +269,9 @@ jest.mock('@/services/ApiService', () => ({
   fetchTopicNaming: (...args: Parameters<typeof mockFetchTopicNaming>) => mockFetchTopicNaming(...args)
 }))
 jest.mock('@/services/AssistantService', () => ({
+  assistantService: {
+    getAssistant: (assistantId: string) => mockGetLatestAssistant(assistantId)
+  },
   getAssistantModel: (assistant: Pick<Assistant, 'model' | 'defaultModel'>) =>
     assistant.model ?? assistant.defaultModel,
   getAssistantSettings: (assistant: Assistant) => ({ contextCount: 20, ...assistant.settings })
@@ -348,6 +352,7 @@ describe('sendAgentMessage simulated main flow', () => {
     mockAgentScenario = 'success'
     abortMap.clear()
     jest.clearAllMocks()
+    mockGetLatestAssistant.mockResolvedValue(null)
     mockUpdateTopic.mockResolvedValue(undefined)
     mockFetchTopicNaming.mockResolvedValue(undefined)
   })
@@ -440,6 +445,66 @@ describe('sendAgentMessage simulated main flow', () => {
     expect(assistantMessage?.status).toBe(AssistantMessageStatus.SUCCESS)
     expect(textBlock).toMatchObject({ content: '模拟响应', status: MessageBlockStatus.SUCCESS })
     expect(mockUpdateTopic).toHaveBeenLastCalledWith(message.topicId, { isLoading: false })
+  })
+
+  it('registers MCP tools for an unrecognised custom model without requiring toolUseMode', async () => {
+    const { message, blocks } = makeUserMessage()
+    const assistantWithMcp: Assistant = {
+      ...assistant,
+      // This intentionally has no settings.toolUseMode. The mocked model is
+      // also absent from the built-in function-calling capability table.
+      mcpServers: [{ id: 'mcp-1' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    mockCreateMcpTools.mockResolvedValueOnce([
+      {
+        name: 'mcp_exa_web_search',
+        label: 'Exa · web_search_exa',
+        description: 'Search the web',
+        parameters: { type: 'object', properties: {} },
+        execute: jest.fn()
+      }
+    ])
+
+    await sendAgentMessage(message, blocks, assistantWithMcp, message.topicId)
+
+    expect(mockCreateMcpTools).toHaveBeenCalledWith(
+      expect.objectContaining({ mcpServers: assistantWithMcp.mcpServers })
+    )
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ name: 'mcp_exa_web_search' })])
+    )
+  })
+
+  it('uses the latest Assistant MCP binding when the UI sends a stale snapshot', async () => {
+    const { message, blocks } = makeUserMessage()
+    const latestAssistant: Assistant = {
+      ...assistant,
+      mcpServers: [{ id: 'mcp-newly-installed' } as NonNullable<Assistant['mcpServers']>[number]]
+    }
+    mockGetLatestAssistant.mockResolvedValueOnce(latestAssistant)
+    mockCreateMcpTools.mockResolvedValueOnce([
+      {
+        name: 'mcp_latest_search',
+        label: 'Latest Search',
+        description: 'Search from the newly installed MCP',
+        parameters: { type: 'object', properties: {} },
+        execute: jest.fn()
+      }
+    ])
+
+    // `assistant` deliberately has no mcpServers, matching the stale object
+    // retained by a chat screen immediately after returning from the market.
+    await sendAgentMessage(message, blocks, assistant, message.topicId)
+
+    expect(mockGetLatestAssistant).toHaveBeenCalledWith(assistant.id)
+    expect(mockCreateMcpTools).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: latestAssistant.mcpServers }))
+    expect(mockAgentConstruction).toHaveBeenCalledWith(
+      model,
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ name: 'mcp_latest_search' })])
+    )
   })
 
   it('surfaces a simulated provider failure as an error block instead of leaving the conversation loading', async () => {

@@ -13,13 +13,15 @@ interface McpMarketContentProps {
   handleMcpServerItemPress: (mcp: MCPServer) => void
   mode?: 'add' | 'toggle'
   onToggle?: (mcp: MCPServer, isActive: boolean) => void
+  assistantId?: string
 }
 
 export const McpMarketContent: FC<McpMarketContentProps> = ({
   mcps,
   handleMcpServerItemPress,
   mode = 'toggle',
-  onToggle
+  onToggle,
+  assistantId
 }) => {
   const insets = useSafeAreaInsets()
 
@@ -28,7 +30,13 @@ export const McpMarketContent: FC<McpMarketContentProps> = ({
       <LegendList
         data={mcps}
         renderItem={({ item }) => (
-          <McpItemCard mcp={item} handleMcpServerItemPress={handleMcpServerItemPress} mode={mode} onToggle={onToggle} />
+          <McpItemCard
+            mcp={item}
+            handleMcpServerItemPress={handleMcpServerItemPress}
+            mode={mode}
+            onToggle={onToggle}
+            assistantId={assistantId}
+          />
         )}
         keyExtractor={item => item.id}
         showsVerticalScrollIndicator={false}

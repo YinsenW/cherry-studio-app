@@ -1,4 +1,5 @@
 import type { MCPServer } from '@/types/mcp'
+import type { MCPTool } from '@/types/tool'
 
 import { McpService } from '../McpService'
 
@@ -36,6 +37,7 @@ function resetService(service: McpService) {
     accessOrder: string[]
     allMcpServersCache: Map<string, MCPServer>
     allMcpServersCacheTimestamp: number | null
+    toolsCache: Map<string, { tools: MCPTool[]; timestamp: number }>
     mcpServerSubscribers: Map<string, Set<() => void>>
     globalSubscribers: Set<() => void>
     allMcpServersSubscribers: Set<() => void>
@@ -44,6 +46,7 @@ function resetService(service: McpService) {
   internals.accessOrder.length = 0
   internals.allMcpServersCache.clear()
   internals.allMcpServersCacheTimestamp = null
+  internals.toolsCache.clear()
   internals.mcpServerSubscribers.clear()
   internals.globalSubscribers.clear()
   internals.allMcpServersSubscribers.clear()
@@ -88,5 +91,29 @@ describe('McpService marketplace persistence boundary', () => {
 
     expect(service.getMcpServerCached(server.id)).toBeNull()
     expect(subscriber).not.toHaveBeenCalled()
+  })
+
+  it('binds static in-memory tools to the real persisted server ID', async () => {
+    const builtin: MCPServer = {
+      id: '@cherry/time',
+      name: '@cherry/time',
+      type: 'inMemory',
+      isActive: true
+    }
+    await service.createMcpServer(builtin)
+
+    const tools = await service.getMcpTools(builtin.id, true)
+
+    expect(tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'GetCurrentTime',
+          serverId: builtin.id,
+          serverName: builtin.name,
+          isBuiltIn: true
+        })
+      ])
+    )
+    expect(tools.every(tool => tool.serverId === builtin.id)).toBe(true)
   })
 })

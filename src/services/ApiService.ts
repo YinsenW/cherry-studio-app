@@ -273,12 +273,24 @@ export async function fetchTopicNaming(topicId: string, regenerate: boolean = fa
 export async function fetchAssistantMcpTools(assistant: Assistant) {
   let mcpTools: MCPTool[] = []
 
-  // Get all active MCP servers using McpService (with caching)
-  const activedMcpServers = await mcpService.getActiveMcpServers()
-  const assistantMcpServers = assistant.mcpServers || []
-
-  // Filter to only MCP servers enabled for this assistant
-  const enabledMCPs = activedMcpServers.filter(server => assistantMcpServers.some(s => s.id === server.id))
+  // Resolve exactly the server IDs persisted on this Assistant. Looking up
+  // the global active-server list first can return a stale snapshot during
+  // the install -> attach -> first-message window and silently drops the
+  // newly attached server.
+  const assistantMcpServerIds = Array.from(new Set((assistant.mcpServers ?? []).map(server => server.id)))
+  const enabledMCPs = (
+    await Promise.all(
+      assistantMcpServerIds.map(async serverId => {
+        try {
+          const server = await mcpService.getMcpServer(serverId)
+          return server?.isActive ? server : null
+        } catch (error) {
+          logger.warn(`Failed to load MCP server ${serverId} for assistant ${assistant.id}:`, error as Error)
+          return null
+        }
+      })
+    )
+  ).filter((server): server is MCPServer => server !== null)
 
   if (enabledMCPs && enabledMCPs.length > 0) {
     try {

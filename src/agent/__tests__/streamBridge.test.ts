@@ -102,6 +102,42 @@ describe('createStreamFn simulated provider stream', () => {
     ])
   })
 
+  it('forwards registered Agent tools to the provider request', async () => {
+    async function* simulatedFullStream() {
+      yield { type: 'text-delta', text: 'tool-aware response' }
+    }
+    mockStreamText.mockResolvedValue({ fullStream: simulatedFullStream() })
+
+    const streamFn = createStreamFn(model, provider)
+    streamFn(
+      {} as never,
+      {
+        systemPrompt: 'system',
+        messages: [],
+        tools: [
+          {
+            name: 'mcp_abc123_search',
+            description: 'Search the web',
+            parameters: { type: 'object', properties: { query: { type: 'string' } } }
+          }
+        ]
+      },
+      {}
+    )
+    await waitForEnd()
+
+    expect(mockStreamText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: expect.objectContaining({
+          mcp_abc123_search: expect.objectContaining({
+            description: 'Search the web',
+            inputSchema: expect.any(Object)
+          })
+        })
+      })
+    )
+  })
+
   it('converts a simulated provider failure into a terminal error event', async () => {
     mockStreamText.mockRejectedValue(new Error('模拟网络失败'))
 

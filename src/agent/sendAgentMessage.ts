@@ -3,9 +3,10 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Tool } from 'ai'
 
 import { getActualProvider } from '@/aiCore/provider/providerConfig'
+import { BUILTIN_TOOLS, type BuiltinMcpId } from '@/config/mcp'
 import { isFunctionCallingModel } from '@/config/models'
 import { fetchTopicNaming } from '@/services/ApiService'
-import { getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
+import { assistantService, getAssistantModel, getAssistantSettings } from '@/services/AssistantService'
 import { ConversationService } from '@/services/ConversationService'
 import { loggerService } from '@/services/LoggerService'
 import {
@@ -86,6 +87,22 @@ function resolveAgentAssistant(assistant: Assistant): Assistant {
 }
 
 /**
+ * Navigation and React rendering can briefly retain the Assistant snapshot
+ * from before a marketplace install completed. Re-read the service cache at
+ * session start so a just-attached MCP server is never lost because the send
+ * button still holds an older object.
+ */
+async function resolveLatestAgentAssistant(assistant: Assistant): Promise<Assistant> {
+  try {
+    const latestAssistant = await assistantService.getAssistant(assistant.id)
+    return resolveAgentAssistant(latestAssistant ?? assistant)
+  } catch (error) {
+    logger.warn(`Unable to refresh assistant ${assistant.id}; using the supplied snapshot:`, error as Error)
+    return resolveAgentAssistant(assistant)
+  }
+}
+
+/**
  * Keep the core LLM path independent from the optional MCP runtime. In
  * particular, loading optional MCP integration must not prevent an assistant
  * with no MCP servers from replying.
@@ -99,7 +116,7 @@ async function loadMcpAgentTools(assistant: Assistant): Promise<AgentTool[]> {
     // Keep this module lazy so an optional MCP-runtime initialization failure
     // cannot break the core reply path. A literal require is also resolved
     // deterministically by Metro and Jest in release/test CommonJS bundles.
-    const { createMcpTools } = require('@/aiCore/tools/SystemTools/McpTools') as {
+    const { createMcpTools } = require('../aiCore/tools/SystemTools/McpTools') as {
       createMcpTools: (assistant: Assistant) => Promise<AgentTool[]>
     }
     return await createMcpTools(assistant)
@@ -145,7 +162,7 @@ function validateAgentTools(tools: AgentTool[]): AgentTool[] {
  * explicit function tool-use selection is the user's authoritative signal
  * that the configured model accepts tools.
  */
-function shouldLoadAgentTools(assistant: Assistant): boolean {
+function shouldLoadBuiltInAgentTools(assistant: Assistant): boolean {
   const model = getAssistantModel(assistant)
   return Boolean(model && (assistant.settings?.toolUseMode === 'function' || isFunctionCallingModel(model)))
 }
@@ -156,7 +173,7 @@ async function loadAgentTools(
   providedWorkspaceBackend?: WorkspaceBackend | null,
   runtimeSession?: AgentRuntimeSession | null
 ): Promise<AgentTool[]> {
-  if (!shouldLoadAgentTools(assistant)) {
+  if (!shouldLoadBuiltInAgentTools(assistant)) {
     return []
   }
 
@@ -173,10 +190,19 @@ async function loadAgentTools(
     )
   ])
 
+  // Once an in-memory server is explicitly attached, its MCP configuration
+  // (active state and disabledTools) becomes authoritative. Do not inject a
+  // second unconditional SystemTool copy that would bypass those controls.
+  const mcpManagedBuiltInToolNames = new Set(
+    (assistant.mcpServers ?? []).flatMap(server =>
+      (BUILTIN_TOOLS[server.id as BuiltinMcpId] ?? []).map(tool => tool.name)
+    )
+  )
   const builtInTools: AgentTool[] = []
-  for (const record of records) {
+  for (const [recordIndex, record] of records.entries()) {
     for (const [name, tool] of Object.entries(record)) {
       if (!tool) continue
+      if (recordIndex === 0 && mcpManagedBuiltInToolNames.has(name)) continue
       try {
         builtInTools.push(aiSdkToolToAgentTool(name, tool))
       } catch (error) {
@@ -224,7 +250,7 @@ export async function runAgentSession(
   let runtimeSession: AgentRuntimeSession | null = null
   let runOutcome: 'success' | 'error' | 'aborted' = 'error'
   let runError: Error | null = null
-  const resolvedAssistant = resolveAgentAssistant(assistant)
+  const resolvedAssistant = await resolveLatestAgentAssistant(assistant)
   // Keep "allow this session" scoped to one agent run. A global singleton
   // would accidentally carry a previous approval into a later conversation.
   const approvalCoordinator = new ToolApprovalCoordinator()
@@ -267,9 +293,14 @@ export async function runAgentSession(
     // 3. 构造 agent 工具集：系统 + Android + 计算 + LLM 子任务 + 免费 API + 飞书 + GitHub + 用户 MCP 服务器
     const configuredProvider = await getAssistantProvider(resolvedAssistant)
     const provider = getActualProvider(resolvedAssistant.model!, configuredProvider)
-    const canUseAgentTools = shouldLoadAgentTools(resolvedAssistant)
+    // Built-in tools still respect the model capability gate. A configured
+    // MCP server is different: its tools are an explicit user choice and
+    // must be registered even when a custom model is absent from Cherry's
+    // model-name capability table.
+    const canUseBuiltInAgentTools = shouldLoadBuiltInAgentTools(resolvedAssistant)
+    const hasConfiguredMcp = (resolvedAssistant.mcpServers?.length ?? 0) > 0
     let workspaceBackend: WorkspaceBackend | null = null
-    if (canUseAgentTools) {
+    if (canUseBuiltInAgentTools) {
       try {
         runtimeSession = await agentRuntimeService.startRun({
           topicId,
@@ -298,9 +329,11 @@ export async function runAgentSession(
         createdAt: 0,
         updatedAt: 0
       } as const)
-    const tools = canUseAgentTools
+    const tools = canUseBuiltInAgentTools
       ? await loadAgentTools(resolvedAssistant, topicId, workspaceBackend, runtimeSession)
-      : []
+      : hasConfiguredMcp
+        ? validateAgentTools(await loadMcpAgentTools(resolvedAssistant))
+        : []
     const agentService = new AgentService(
       resolvedAssistant.model!,
       provider,

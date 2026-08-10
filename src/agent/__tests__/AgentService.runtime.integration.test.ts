@@ -1,3 +1,5 @@
+import type { AgentTool } from '@earendil-works/pi-agent-core'
+
 import type { Model, Provider } from '@/types/assistant'
 
 import { createStreamProcessor } from '../../services/StreamProcessingService'
@@ -190,6 +192,128 @@ describe('AgentService runtime integration', () => {
       'delta:真实 Agent ',
       'delta:真实 Agent 协议响应',
       'complete:真实 Agent 协议响应',
+      'complete-status:success'
+    ])
+  })
+
+  it('carries a registered MCP-style tool through the real Agent execution loop', async () => {
+    const toolName = 'mcp_abc123_web_search_exa'
+    const executeTool = jest.fn<ReturnType<AgentTool['execute']>, Parameters<AgentTool['execute']>>(async () => ({
+      content: [{ type: 'text', text: 'Exa found the Cherry Studio result.' }],
+      details: { source: 'exa' }
+    }))
+    const tool: AgentTool = {
+      name: toolName,
+      label: 'Exa · web_search_exa',
+      description: 'Search the web with Exa',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+        additionalProperties: false
+      } as AgentTool['parameters'],
+      execute: executeTool
+    }
+
+    async function* toolCallStream() {
+      yield {
+        type: 'tool-call',
+        toolCallId: 'call-exa-1',
+        toolName,
+        input: { query: 'Cherry Studio' }
+      }
+      yield { type: 'finish', finishReason: 'tool-calls' }
+    }
+
+    async function* finalAnswerStream() {
+      yield { type: 'text-delta', text: 'Exa 工具调用成功。' }
+      yield { type: 'finish', finishReason: 'stop' }
+    }
+
+    mockStreamText
+      .mockResolvedValueOnce({
+        fullStream: toolCallStream(),
+        text: Promise.resolve(''),
+        toolCalls: Promise.resolve([
+          {
+            toolCallId: 'call-exa-1',
+            toolName,
+            input: { query: 'Cherry Studio' }
+          }
+        ])
+      })
+      .mockResolvedValueOnce({
+        fullStream: finalAnswerStream(),
+        text: Promise.resolve('Exa 工具调用成功。'),
+        toolCalls: Promise.resolve([])
+      })
+
+    const lifecycle: string[] = []
+    const processor = createStreamProcessor({
+      onLLMResponseCreated: () => {
+        lifecycle.push('created')
+      },
+      onToolCallPending: response => {
+        lifecycle.push(`tool-pending:${response.tool.name}`)
+      },
+      onToolCallComplete: response => {
+        lifecycle.push(`tool-complete:${response.status}`)
+      },
+      onTextComplete: text => {
+        lifecycle.push(`text-complete:${text}`)
+      },
+      onComplete: status => {
+        lifecycle.push(`complete-status:${status}`)
+      },
+      onError: error => {
+        lifecycle.push(`error:${error.message}`)
+      }
+    })
+    const agent = new AgentService(model, provider, [tool], 'Use the registered tools when needed.')
+    agent.subscribe(createAgentEventToChunk(processor))
+
+    await agent.prompt('请用 Exa 搜索 Cherry Studio')
+    await processor.drain()
+
+    expect(mockStreamText).toHaveBeenCalledTimes(2)
+    expect(mockStreamText.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        tools: expect.objectContaining({
+          [toolName]: expect.objectContaining({
+            description: tool.description,
+            inputSchema: expect.any(Object)
+          })
+        })
+      })
+    )
+    expect(executeTool).toHaveBeenCalledWith(
+      'call-exa-1',
+      { query: 'Cherry Studio' },
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+    expect(mockStreamText.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'tool',
+            content: [
+              expect.objectContaining({
+                type: 'tool-result',
+                toolCallId: 'call-exa-1',
+                toolName,
+                output: { type: 'text', value: 'Exa found the Cherry Studio result.' }
+              })
+            ]
+          })
+        ])
+      })
+    )
+    expect(lifecycle).toEqual([
+      'created',
+      `tool-pending:${toolName}`,
+      'tool-complete:done',
+      'text-complete:Exa 工具调用成功。',
       'complete-status:success'
     ])
   })
